@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Property Comparison Report</title>
+  <style>{{ css }}</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Property Comparison Report</h1>
+      <p class="subtitle">Comparing {{ results.properties | length }} properties</p>
+      <p class="date">Generated {{ generated_at }}</p>
+    </header>
+
+    <main>
+      {# ---- Overall Ranking ---- #}
+      <section class="section" id="ranking">
+        <h2 class="section-title">Overall Ranking</h2>
+        <div class="ranking-list">
+          {% for address in results.ranking %}
+          <div class="ranking-item">
+            <span class="ranking-position">#{{ loop.index }}</span>
+            <span class="ranking-address">{{ address }}</span>
+            {% for prop in results.properties %}
+              {% if prop.address == address %}
+              <span class="ranking-score">Score: {{ prop.total_score | number(1) }}</span>
+              {% endif %}
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="card-grid">
+          <div class="card">
+            <span class="card-label">Best Value ($/sqft)</span>
+            <span class="card-value card-value-small">{{ results.best_value }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Lowest Payment</span>
+            <span class="card-value card-value-small">{{ results.lowest_payment }}</span>
+          </div>
+        </div>
+      </section>
+
+      {# ---- Side-by-Side Comparison ---- #}
+      <section class="section" id="comparison-table">
+        <h2 class="section-title">Side-by-Side Comparison</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                {% for prop in results.properties %}
+                <th>
+                  {{ prop.address }}
+                  {% if loop.index == 1 %}
+                  <br><span class="badge badge-positive">Top Ranked</span>
+                  {% endif %}
+                </th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Monthly Payment</td>
+                {% for prop in results.properties %}
+                <td>{{ prop.monthly_payment | currency }}</td>
+                {% endfor %}
+              </tr>
+              <tr>
+                <td>Price per Sqft</td>
+                {% for prop in results.properties %}
+                <td>{{ prop.price_per_sqft | currency }}</td>
+                {% endfor %}
+              </tr>
+              <tr>
+                <td>Total Score</td>
+                {% for prop in results.properties %}
+                <td><strong>{{ prop.total_score | number(1) }}</strong></td>
+                {% endfor %}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {# ---- Score Breakdown ---- #}
+      <section class="section" id="scores">
+        <h2 class="section-title">Score Breakdown</h2>
+        {% for prop in results.properties %}
+        <div class="score-card">
+          <h3>{{ prop.address }}</h3>
+          <div class="score-bars">
+            <div class="score-row">
+              <span class="score-label">Financial</span>
+              <div class="score-bar-track">
+                <div class="score-bar score-bar-financial" style="width: {{ prop.financial_score }}%;">
+                  <span class="score-bar-text">{{ prop.financial_score | number(1) }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="score-row">
+              <span class="score-label">Value</span>
+              <div class="score-bar-track">
+                <div class="score-bar score-bar-value" style="width: {{ prop.value_score }}%;">
+                  <span class="score-bar-text">{{ prop.value_score | number(1) }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="score-row">
+              <span class="score-label">Size</span>
+              <div class="score-bar-track">
+                <div class="score-bar score-bar-size" style="width: {{ prop.size_score }}%;">
+                  <span class="score-bar-text">{{ prop.size_score | number(1) }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="score-row">
+              <span class="score-label"><strong>Overall</strong></span>
+              <div class="score-bar-track">
+                <div class="score-bar score-bar-overall" style="width: {{ prop.total_score }}%;">
+                  <span class="score-bar-text">{{ prop.total_score | number(1) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </section>
+
+      {# ---- Pros and Cons ---- #}
+      <section class="section" id="pros-cons">
+        <h2 class="section-title">Pros &amp; Cons</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Property</th>
+                {% for prop in results.properties %}
+                <th>{{ prop.address }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Pros</strong></td>
+                {% for prop in results.properties %}
+                <td>
+                  {% if prop.pros %}
+                  <ul class="pros-list">
+                    {% for pro in prop.pros %}
+                    <li>{{ pro }}</li>
+                    {% endfor %}
+                  </ul>
+                  {% else %}
+                  <span class="text-muted">None identified</span>
+                  {% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+              <tr>
+                <td><strong>Cons</strong></td>
+                {% for prop in results.properties %}
+                <td>
+                  {% if prop.cons %}
+                  <ul class="cons-list">
+                    {% for con in prop.cons %}
+                    <li>{{ con }}</li>
+                    {% endfor %}
+                  </ul>
+                  {% else %}
+                  <span class="text-muted">None identified</span>
+                  {% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Generated by Home Purchase Analysis Tool v0.1.0</p>
+      <p class="disclaimer">This report is for informational purposes only and does not constitute financial, legal, or real estate advice. Consult qualified professionals before making purchase decisions.</p>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,202 @@
+<section class="section" id="neighborhood">
+  <h2 class="section-title">Neighborhood Analysis</h2>
+
+  {# ---- Composite Score ---- #}
+  {% if results.neighborhood.composite_score is not none %}
+  <div class="card-grid">
+    <div class="card card-wide">
+      <span class="card-label">Composite Neighborhood Score</span>
+      <div class="gauge">
+        <div class="gauge-bar" style="width: {{ results.neighborhood.composite_score }}%;"
+             data-score="{{ results.neighborhood.composite_score | number(0) }}">
+          <span class="gauge-text">{{ results.neighborhood.composite_score | number(0) }} / 100</span>
+        </div>
+      </div>
+      <span class="card-detail">Data completeness: {{ (results.neighborhood.data_completeness * 100) | number(0) }}%</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ---- Schools ---- #}
+  {% if results.neighborhood.schools %}
+  <h3>Nearby Schools</h3>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>School Name</th>
+          <th>Type</th>
+          <th>Grades</th>
+          <th>Rating</th>
+          <th>Distance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for school in results.neighborhood.schools %}
+        <tr>
+          <td>{{ school.name }}</td>
+          <td>{{ school.type | title }}</td>
+          <td>{{ school.grades if school.grades else "N/A" }}</td>
+          <td>
+            {% if school.rating is not none %}
+              <span class="rating-badge {% if school.rating >= 7 %}badge-positive{% elif school.rating >= 4 %}badge-neutral{% else %}badge-negative{% endif %}">
+                {{ school.rating }} / 10
+              </span>
+            {% else %}
+              N/A
+            {% endif %}
+          </td>
+          <td>
+            {% if school.distance_miles is not none %}
+              {{ school.distance_miles | number(1) }} mi
+            {% else %}
+              N/A
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="card-grid">
+    {# ---- Crime Stats ---- #}
+    {% if results.neighborhood.crime %}
+    <div class="card">
+      <span class="card-label">Crime Statistics</span>
+      {% if results.neighborhood.crime.overall_safety_score is not none %}
+      <span class="card-value">
+        Safety: <span class="{% if results.neighborhood.crime.overall_safety_score >= 7 %}text-positive{% elif results.neighborhood.crime.overall_safety_score >= 4 %}text-neutral{% else %}text-negative{% endif %}">
+          {{ results.neighborhood.crime.overall_safety_score }} / 10
+        </span>
+      </span>
+      {% endif %}
+      <div class="card-details-list">
+        {% if results.neighborhood.crime.violent_crime_rate is not none %}
+        <div class="detail-row">
+          <span>Violent Crime Rate</span>
+          <span>{{ results.neighborhood.crime.violent_crime_rate | number(1) }} per 100k</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.crime.property_crime_rate is not none %}
+        <div class="detail-row">
+          <span>Property Crime Rate</span>
+          <span>{{ results.neighborhood.crime.property_crime_rate | number(1) }} per 100k</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.crime.data_year is not none %}
+        <div class="detail-row">
+          <span>Data Year</span>
+          <span>{{ results.neighborhood.crime.data_year }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ---- Walkability Scores ---- #}
+    {% if results.neighborhood.walkability %}
+    <div class="card">
+      <span class="card-label">Walkability Scores</span>
+      <div class="card-details-list">
+        {% if results.neighborhood.walkability.walk_score is not none %}
+        <div class="detail-row">
+          <span>Walk Score</span>
+          <span class="{% if results.neighborhood.walkability.walk_score >= 70 %}text-positive{% elif results.neighborhood.walkability.walk_score >= 40 %}text-neutral{% else %}text-negative{% endif %}">
+            {{ results.neighborhood.walkability.walk_score }}
+          </span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.walkability.transit_score is not none %}
+        <div class="detail-row">
+          <span>Transit Score</span>
+          <span>{{ results.neighborhood.walkability.transit_score }}</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.walkability.bike_score is not none %}
+        <div class="detail-row">
+          <span>Bike Score</span>
+          <span>{{ results.neighborhood.walkability.bike_score }}</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.walkability.description %}
+        <div class="detail-row">
+          <span>Description</span>
+          <span>{{ results.neighborhood.walkability.description }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ---- Flood Risk ---- #}
+    {% if results.neighborhood.flood_risk %}
+    <div class="card">
+      <span class="card-label">Flood Risk</span>
+      <span class="card-value">
+        <span class="badge {% if results.neighborhood.flood_risk.risk_level == 'low' %}badge-positive{% elif results.neighborhood.flood_risk.risk_level == 'moderate' %}badge-neutral{% else %}badge-negative{% endif %}">
+          {{ results.neighborhood.flood_risk.risk_level | title }} Risk
+        </span>
+      </span>
+      <div class="card-details-list">
+        {% if results.neighborhood.flood_risk.flood_zone %}
+        <div class="detail-row">
+          <span>Flood Zone</span>
+          <span>{{ results.neighborhood.flood_risk.flood_zone }}</span>
+        </div>
+        {% endif %}
+        <div class="detail-row">
+          <span>In Floodplain</span>
+          <span>{{ "Yes" if results.neighborhood.flood_risk.in_floodplain else "No" }}</span>
+        </div>
+        <div class="detail-row">
+          <span>Flood Insurance Required</span>
+          <span class="{% if results.neighborhood.flood_risk.flood_insurance_required %}text-negative{% else %}text-positive{% endif %}">
+            {{ "Yes" if results.neighborhood.flood_risk.flood_insurance_required else "No" }}
+          </span>
+        </div>
+        {% if results.neighborhood.flood_risk.recent_disasters > 0 %}
+        <div class="detail-row">
+          <span>Recent Disasters</span>
+          <span class="text-negative">{{ results.neighborhood.flood_risk.recent_disasters }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ---- Demographics ---- #}
+    {% if results.neighborhood.demographics %}
+    <div class="card">
+      <span class="card-label">Demographics</span>
+      <div class="card-details-list">
+        {% if results.neighborhood.demographics.total_population is not none %}
+        <div class="detail-row">
+          <span>Population</span>
+          <span>{{ results.neighborhood.demographics.total_population | number }}</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.demographics.median_household_income is not none %}
+        <div class="detail-row">
+          <span>Median Income</span>
+          <span>{{ results.neighborhood.demographics.median_household_income | currency }}</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.demographics.median_home_value is not none %}
+        <div class="detail-row">
+          <span>Median Home Value</span>
+          <span>{{ results.neighborhood.demographics.median_home_value | currency }}</span>
+        </div>
+        {% endif %}
+        {% if results.neighborhood.demographics.population_density is not none %}
+        <div class="detail-row">
+          <span>Pop. Density</span>
+          <span>{{ results.neighborhood.demographics.population_density | number }} / sq mi</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>

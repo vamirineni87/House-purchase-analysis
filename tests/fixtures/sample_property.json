@@ -1,0 +1,18 @@
+{
+  "address": {
+    "street": "123 Main St",
+    "city": "Austin",
+    "state": "TX",
+    "zip_code": "78701"
+  },
+  "list_price": 450000,
+  "bedrooms": 3,
+  "bathrooms": 2.5,
+  "square_feet": 2000,
+  "lot_size_sqft": 6500,
+  "year_built": 2005,
+  "property_type": "single_family",
+  "hoa_monthly": 150,
+  "garage_spaces": 2,
+  "stories": 2
+}

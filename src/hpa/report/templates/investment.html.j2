@@ -1,0 +1,145 @@
+<section class="section" id="investment">
+  <h2 class="section-title">Investment Analysis</h2>
+
+  {# ---- Key Metrics ---- #}
+  <div class="card-grid">
+    <div class="card">
+      <span class="card-label">Assumed Appreciation Rate</span>
+      <span class="card-value">{{ results.investment.appreciation_rate | pct(2) }}</span>
+    </div>
+    {% if results.investment.irr_on_down_payment is not none %}
+    <div class="card">
+      <span class="card-label">IRR on Down Payment</span>
+      <span class="card-value {% if results.investment.irr_on_down_payment > 0 %}text-positive{% else %}text-negative{% endif %}">
+        {{ results.investment.irr_on_down_payment | pct(2) }}
+      </span>
+    </div>
+    {% endif %}
+    <div class="card">
+      <span class="card-label">Net Worth Impact (5 yr)</span>
+      <span class="card-value {% if results.investment.net_worth_impact_5yr > 0 %}text-positive{% else %}text-negative{% endif %}">
+        {{ results.investment.net_worth_impact_5yr | currency }}
+      </span>
+    </div>
+    <div class="card">
+      <span class="card-label">Net Worth Impact (10 yr)</span>
+      <span class="card-value {% if results.investment.net_worth_impact_10yr > 0 %}text-positive{% else %}text-negative{% endif %}">
+        {{ results.investment.net_worth_impact_10yr | currency }}
+      </span>
+    </div>
+  </div>
+
+  {# ---- Equity Buildup Projection ---- #}
+  {% if results.investment.yearly_projections %}
+  <h3>Equity Buildup Projection</h3>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Year</th>
+          <th>Home Value</th>
+          <th>Equity</th>
+          <th>Cumulative Cost</th>
+          <th>Tax Benefit</th>
+          <th>Net Position</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for proj in results.investment.yearly_projections %}
+        {% if proj.year in [1, 2, 3, 5, 7, 10, 15, 20, 25, 30] %}
+        <tr>
+          <td>{{ proj.year }}</td>
+          <td>{{ proj.home_value | currency }}</td>
+          <td>{{ proj.equity | currency }}</td>
+          <td>{{ proj.cumulative_cost | currency }}</td>
+          <td class="text-positive">{{ proj.cumulative_tax_benefit | currency }}</td>
+          <td class="{% if proj.net_position > 0 %}text-positive{% else %}text-negative{% endif %}">
+            <strong>{{ proj.net_position | currency }}</strong>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {# ---- Equity at Key Years ---- #}
+  {% if results.investment.total_equity_at_year %}
+  <h3>Total Equity at Key Milestones</h3>
+  <div class="card-grid">
+    {% for year, equity in results.investment.total_equity_at_year.items() | sort %}
+    <div class="card">
+      <span class="card-label">Year {{ year }}</span>
+      <span class="card-value">{{ equity | currency }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ---- Rent vs Buy Comparison ---- #}
+  {% if results.investment.rent_vs_buy %}
+  {% set rvb = results.investment.rent_vs_buy %}
+  <h3>Rent vs. Buy Comparison</h3>
+
+  <div class="recommendation-box {% if rvb.recommendation == 'buy' %}recommendation-buy{% elif rvb.recommendation == 'rent' %}recommendation-rent{% else %}recommendation-either{% endif %}">
+    <div class="recommendation-header">
+      <span class="recommendation-label">Recommendation</span>
+      <span class="badge {% if rvb.recommendation == 'buy' %}badge-positive{% elif rvb.recommendation == 'rent' %}badge-negative{% else %}badge-neutral{% endif %}">
+        {{ rvb.recommendation | title }}
+      </span>
+    </div>
+    <div class="card-grid">
+      <div class="card">
+        <span class="card-label">Equivalent Monthly Rent</span>
+        <span class="card-value">{{ rvb.monthly_rent_equivalent | currency }}</span>
+      </div>
+      <div class="card">
+        <span class="card-label">Annual Rent Increase</span>
+        <span class="card-value">{{ rvb.annual_rent_increase_pct | pct(1) }}</span>
+      </div>
+      {% if rvb.buy_break_even_year is not none %}
+      <div class="card">
+        <span class="card-label">Break-Even Year</span>
+        <span class="card-value">Year {{ rvb.buy_break_even_year }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---- Rent vs Buy Cost Table ---- #}
+  {% if rvb.rent_total_cost and rvb.buy_total_cost %}
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Year</th>
+          <th>Cumulative Rent Cost</th>
+          <th>Cumulative Buy Cost (Net)</th>
+          <th>Advantage</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for year in rvb.rent_total_cost.keys() | list | sort %}
+        <tr>
+          <td>{{ year }}</td>
+          <td>{{ rvb.rent_total_cost[year] | currency }}</td>
+          <td>{{ rvb.buy_total_cost[year] | currency }}</td>
+          <td>
+            {% set diff = rvb.rent_total_cost[year] - rvb.buy_total_cost[year] %}
+            <span class="{% if diff > 0 %}text-positive{% else %}text-negative{% endif %}">
+              {% if diff > 0 %}
+                Buy saves {{ diff | currency }}
+              {% else %}
+                Rent saves {{ (diff | abs) | currency }}
+              {% endif %}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
