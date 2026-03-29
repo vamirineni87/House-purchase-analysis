@@ -1,0 +1,105 @@
+{
+  "Buffalo Trail ES": {
+    "gs_rating": "6",
+    "school_id": "va-5236",
+    "city": "Aldie",
+    "state": "VA",
+    "zipcode": "20105",
+    "school_type": "public",
+    "level": "p,e",
+    "district_id": "104",
+    "num_reviews": "27",
+    "address": "42190 Seven Hills Drive",
+    "test_scores": {
+      "Math": {
+        "score": 85.0
+      },
+      "Reading": {
+        "score": 82.0
+      },
+      "Science": {
+        "score": 82.0
+      }
+    },
+    "enrollment": 815,
+    "student_teacher_ratio": 18.0,
+    "demographics": {
+      "Asian or Pacific Islander": 48,
+      "White": 29,
+      "Black": 8,
+      "Two or more races": 7,
+      "Hispanic": 6,
+      "Native American": 6,
+      "Native Hawaiian or Other Pacific Islander": 1
+    },
+    "name": "Buffalo Trail Elementary School"
+  },
+  "Willard MS": {
+    "gs_rating": "7",
+    "school_id": "va-7734",
+    "city": "Aldie",
+    "state": "VA",
+    "zipcode": "20105",
+    "school_type": "public",
+    "level": "m",
+    "district_id": "104",
+    "num_reviews": "5",
+    "address": "40915 Braddock Road",
+    "test_scores": {
+      "Reading": {
+        "score": 88.0
+      },
+      "Math": {
+        "score": 80.0
+      },
+      "Science": {
+        "score": 88.0
+      }
+    },
+    "enrollment": 1587,
+    "student_teacher_ratio": 17.0,
+    "demographics": {
+      "Asian or Pacific Islander": 40,
+      "White": 38,
+      "Black": 9,
+      "Hispanic": 7,
+      "Two or more races": 5,
+      "Native American": 5,
+      "Native Hawaiian or Other Pacific Islander": 1
+    },
+    "name": "Willard Intermediate School"
+  },
+  "Lightridge HS": {
+    "gs_rating": "8",
+    "school_id": "va-7898",
+    "city": "Aldie",
+    "state": "VA",
+    "zipcode": "20105",
+    "school_type": "public",
+    "level": "h",
+    "district_id": "",
+    "num_reviews": "0",
+    "address": "41025 Collaboration Drive",
+    "test_scores": {
+      "Reading": {
+        "score": 95.0
+      },
+      "Writing": {
+        "score": 84.0
+      }
+    },
+    "enrollment": 1771,
+    "student_teacher_ratio": 14.0,
+    "demographics": {
+      "Asian": 92,
+      "White": 35,
+      "Hispanic": 9,
+      "Black": 9,
+      "Two or more races": 6,
+      "Asian or Pacific Islander": 41,
+      "Native American": 6,
+      "Native Hawaiian or Other Pacific Islander": 1
+    },
+    "name": "Lightridge High School"
+  }
+}
