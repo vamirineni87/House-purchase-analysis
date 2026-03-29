@@ -5,252 +5,55 @@
  ✓ Starting...
  ✓ Ready in 3.1s
  ○ Compiling / ...
- ✓ Compiled / in 1694ms (535 modules)
- GET / 200 in 2408ms
- GET / 200 in 95ms
- GET / 200 in 74ms
- GET / 200 in 83ms
- GET / 200 in 91ms
- GET / 200 in 78ms
- GET / 200 in 79ms
- GET / 200 in 88ms
- GET / 200 in 89ms
- GET / 200 in 83ms
- GET / 200 in 80ms
- GET / 200 in 80ms
- GET / 200 in 81ms
- GET / 200 in 79ms
- GET / 200 in 80ms
- GET / 200 in 96ms
- GET / 200 in 82ms
- GET / 200 in 76ms
- GET / 200 in 71ms
- GET / 200 in 70ms
- GET / 200 in 65ms
- GET / 200 in 66ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 67ms
- GET / 200 in 81ms
- GET / 200 in 71ms
- GET / 200 in 66ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 68ms
- GET / 200 in 74ms
- GET / 200 in 78ms
- GET / 200 in 70ms
- GET / 200 in 73ms
- GET / 200 in 69ms
- GET / 200 in 69ms
- GET / 200 in 67ms
- GET / 200 in 70ms
- GET / 200 in 67ms
- GET / 200 in 69ms
- GET / 200 in 68ms
- GET / 200 in 82ms
- GET / 200 in 71ms
- GET / 200 in 68ms
- GET / 200 in 67ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 66ms
- GET / 200 in 69ms
- GET / 200 in 65ms
- GET / 200 in 79ms
- GET / 200 in 67ms
- GET / 200 in 75ms
- GET / 200 in 69ms
- GET / 200 in 67ms
- GET / 200 in 69ms
- GET / 200 in 65ms
- GET / 200 in 65ms
- GET / 200 in 69ms
- GET / 200 in 67ms
- GET / 200 in 73ms
- GET / 200 in 69ms
- GET / 200 in 64ms
- GET / 200 in 65ms
- GET / 200 in 68ms
- GET / 200 in 66ms
- GET / 200 in 65ms
- GET / 200 in 69ms
- GET / 200 in 65ms
- GET / 200 in 79ms
- GET / 200 in 73ms
- GET / 200 in 79ms
- GET / 200 in 67ms
- GET / 200 in 65ms
- GET / 200 in 63ms
- GET / 200 in 72ms
- GET / 200 in 65ms
- GET / 200 in 68ms
- GET / 200 in 67ms
- GET / 200 in 72ms
- GET / 200 in 68ms
- GET / 200 in 66ms
- GET / 200 in 72ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 74ms
- GET / 200 in 78ms
- GET / 200 in 72ms
- GET / 200 in 77ms
- GET / 200 in 78ms
- GET / 200 in 74ms
- GET / 200 in 66ms
- GET / 200 in 65ms
- GET / 200 in 64ms
- GET / 200 in 65ms
- GET / 200 in 64ms
- GET / 200 in 67ms
- GET / 200 in 69ms
- GET / 200 in 68ms
- GET / 200 in 83ms
- GET / 200 in 69ms
- GET / 200 in 67ms
- GET / 200 in 64ms
- GET / 200 in 64ms
- GET / 200 in 65ms
- GET / 200 in 63ms
- GET / 200 in 65ms
- GET / 200 in 69ms
- GET / 200 in 62ms
- GET / 200 in 73ms
- GET / 200 in 68ms
- GET / 200 in 77ms
- GET / 200 in 70ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 69ms
- GET / 200 in 64ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 68ms
- GET / 200 in 88ms
- GET / 200 in 69ms
- GET / 200 in 71ms
- GET / 200 in 67ms
- GET / 200 in 71ms
- GET / 200 in 69ms
- GET / 200 in 68ms
- GET / 200 in 68ms
- GET / 200 in 71ms
- GET / 200 in 67ms
- GET / 200 in 84ms
- GET / 200 in 69ms
- GET / 200 in 77ms
- GET / 200 in 67ms
- GET / 200 in 65ms
- GET / 200 in 67ms
- GET / 200 in 68ms
- GET / 200 in 68ms
- GET / 200 in 75ms
- GET / 200 in 71ms
- GET / 200 in 71ms
- GET / 200 in 79ms
- GET / 200 in 72ms
- GET / 200 in 71ms
- GET / 200 in 69ms
- GET / 200 in 67ms
- GET / 200 in 67ms
- GET / 200 in 67ms
- GET / 200 in 71ms
- GET / 200 in 70ms
- GET / 200 in 68ms
- GET / 200 in 67ms
- GET / 200 in 72ms
- GET / 200 in 75ms
- GET / 200 in 69ms
- GET / 200 in 65ms
- GET / 200 in 64ms
- GET / 200 in 65ms
- GET / 200 in 68ms
- GET / 200 in 70ms
- GET / 200 in 68ms
- GET / 200 in 67ms
- GET / 200 in 76ms
- GET / 200 in 70ms
- GET / 200 in 65ms
- GET / 200 in 66ms
- GET / 200 in 65ms
- GET / 200 in 83ms
- GET / 200 in 75ms
- GET / 200 in 77ms
- GET / 200 in 75ms
- GET / 200 in 72ms
- GET / 200 in 78ms
- GET / 200 in 81ms
- GET / 200 in 75ms
- GET / 200 in 74ms
- GET / 200 in 68ms
- GET / 200 in 65ms
- GET / 200 in 64ms
- GET / 200 in 67ms
- GET / 200 in 66ms
- GET / 200 in 67ms
- GET / 200 in 65ms
- GET / 200 in 64ms
- GET / 200 in 67ms
- GET / 200 in 132ms
- GET / 200 in 69ms
- GET / 200 in 65ms
- GET / 200 in 65ms
- GET / 200 in 65ms
- GET / 200 in 62ms
- GET / 200 in 63ms
- GET / 200 in 65ms
- GET / 200 in 64ms
- GET / 200 in 64ms
- GET / 200 in 66ms
- GET / 200 in 72ms
- GET / 200 in 66ms
- GET / 200 in 76ms
- GET / 200 in 69ms
- GET / 200 in 66ms
- GET / 200 in 69ms
- GET / 200 in 77ms
- GET / 200 in 69ms
- GET / 200 in 71ms
- GET / 200 in 70ms
- GET / 200 in 69ms
- GET / 200 in 66ms
- GET / 200 in 78ms
- GET / 200 in 70ms
- GET / 200 in 70ms
- GET / 200 in 78ms
- GET / 200 in 68ms
- GET / 200 in 72ms
- GET / 200 in 67ms
- GET / 200 in 68ms
- GET / 200 in 69ms
- GET / 200 in 67ms
- GET / 200 in 66ms
- GET / 200 in 81ms
- GET / 200 in 73ms
- GET / 200 in 75ms
- GET / 200 in 68ms
- GET / 200 in 67ms
- GET / 200 in 69ms
- GET / 200 in 82ms
- GET / 200 in 99ms
-Failed to proxy http://127.0.0.1:8000/api/v1/properties/ingest [Error: socket hang up] { code: 'ECONNRESET' }
-[Error: socket hang up] { code: 'ECONNRESET' }
- ○ Compiling /_error ...
- ✓ Compiled /_error in 2.4s (901 modules)
- GET / 200 in 377ms
- GET / 200 in 92ms
- GET / 200 in 74ms
- GET / 200 in 66ms
- GET / 200 in 75ms
- GET / 200 in 103ms
+ ✓ Compiled / in 1427ms (535 modules)
+ GET / 200 in 2124ms
  ○ Compiling /properties ...
- ✓ Compiled /properties in 574ms (798 modules)
- GET /properties 200 in 1037ms
+ ✓ Compiled /properties in 1698ms (556 modules)
+ GET / 200 in 1323ms
+ GET /properties 200 in 2346ms
  ○ Compiling /properties/[id] ...
- ✓ Compiled /properties/[id] in 1251ms (819 modules)
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 2760ms
- GET / 200 in 93ms
-^C
+ ✓ Compiled /properties/[id] in 1311ms (563 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 3042ms
+ GET / 200 in 121ms
+ GET / 200 in 79ms
+ GET / 200 in 73ms
+ GET / 200 in 84ms
+ GET / 200 in 72ms
+ GET / 200 in 70ms
+ GET / 200 in 82ms
+ ✓ Compiled in 758ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 272ms
+ GET / 200 in 233ms
+ GET / 200 in 73ms
+ ✓ Compiled in 1024ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 246ms
+ GET / 200 in 205ms
+ ✓ Compiled in 733ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 215ms
+ GET / 200 in 216ms
+ GET / 200 in 70ms
+ ✓ Compiled in 1327ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 300ms
+ ✓ Compiled in 674ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 221ms
+ GET / 200 in 190ms
+ ✓ Compiled in 999ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 162ms
+ GET / 200 in 141ms
+ ✓ Compiled in 753ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 317ms
+ ✓ Compiled in 833ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 175ms
+ ✓ Compiled in 735ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 185ms
+ GET / 200 in 139ms
+ ✓ Compiled in 704ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 158ms
+ ✓ Compiled in 606ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 179ms
+ ✓ Compiled in 765ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 173ms
+ GET / 200 in 145ms
+ ✓ Compiled in 710ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 163ms
+ GET / 200 in 159ms

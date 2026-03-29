@@ -113,6 +113,56 @@ async def get_property(property_id: str, db: AsyncSession = Depends(get_db)):
     return prop
 
 
+@router.get("/properties/{property_id}/listing-data")
+async def get_listing_data(property_id: str, db: AsyncSession = Depends(get_db)):
+    """Get the scraped listing data (from Zillow/Redfin GraphQL) for a property."""
+    from pipa.models.listing_page import ListingPageSnapshot
+
+    result = await db.execute(
+        select(ListingPageSnapshot)
+        .where(ListingPageSnapshot.property_id == property_id)
+        .order_by(ListingPageSnapshot.scraped_at.desc())
+        .limit(1)
+    )
+    snap = result.scalar_one_or_none()
+    if not snap:
+        return {"property_id": property_id, "listing_data": None, "source": None}
+
+    return {
+        "property_id": property_id,
+        "listing_data": snap.parsed_fields or {},
+        "source": snap.source_site,
+        "scraped_at": snap.scraped_at.isoformat() if snap.scraped_at else None,
+        "parser_version": snap.parser_version,
+    }
+
+
+@router.get("/properties/{property_id}/analysis-results")
+async def get_analysis_results(property_id: str, db: AsyncSession = Depends(get_db)):
+    """Get the latest pipeline analysis results for a property."""
+    from pipa.models.analysis_models import AnalysisRun
+
+    result = await db.execute(
+        select(AnalysisRun)
+        .where(AnalysisRun.property_id == property_id)
+        .order_by(AnalysisRun.computed_at.desc())
+    )
+    runs = result.scalars().all()
+
+    results = {}
+    for run in runs:
+        # Keep only the latest of each type
+        if run.analysis_type not in results:
+            results[run.analysis_type] = {
+                "analysis_type": run.analysis_type,
+                "output": run.output_json,
+                "computed_at": run.computed_at.isoformat() if run.computed_at else None,
+                "ruleset_version": run.ruleset_version,
+            }
+
+    return {"property_id": property_id, "analyses": results}
+
+
 @router.delete("/properties/{property_id}", status_code=204)
 async def delete_property(property_id: str, db: AsyncSession = Depends(get_db)):
     """Delete a property."""

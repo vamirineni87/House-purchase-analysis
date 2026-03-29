@@ -55,6 +55,10 @@ export const api = {
   listProperties: () => request<PropertySummary[]>("/properties"),
 
   getProperty: (id: string) => request<Property>(`/properties/${id}`),
+  getListingData: (id: string) =>
+    request<{ property_id: string; listing_data: Record<string, unknown> | null; source: string | null; scraped_at: string | null }>(`/properties/${id}/listing-data`),
+  getAnalysisResults: (id: string) =>
+    request<{ property_id: string; analyses: Record<string, unknown> }>(`/properties/${id}/analysis-results`),
 
   createProperty: (data: {
     address: {

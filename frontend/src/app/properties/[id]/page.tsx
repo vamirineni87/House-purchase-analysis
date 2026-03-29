@@ -145,6 +145,12 @@ export default function PropertyDetailPage() {
   const [newNoteType, setNewNoteType] = useState("general");
   const [notesLoading, setNotesLoading] = useState(false);
 
+  // Listing data (scraped from Zillow/Redfin)
+  const [listingData, setListingData] = useState<Record<string, unknown> | null>(null);
+
+  // Analysis results from pipeline
+  const [analysisResults, setAnalysisResults] = useState<Record<string, unknown>>({});
+
   // Freshness
   const [freshness, setFreshness] = useState<SourceFreshness[]>([]);
 
@@ -170,6 +176,24 @@ export default function PropertyDetailPage() {
         if (runs.length > 0) setLatestRun(runs[0]);
       } catch {
         // no runs yet
+      }
+
+      // Load listing data (scraped Zillow/Redfin data)
+      try {
+        const ld = await api.getListingData(propertyId);
+        if (ld.listing_data) {
+          setListingData(ld.listing_data);
+        }
+      } catch {
+        // no listing data yet
+      }
+
+      // Load analysis results
+      try {
+        const ar = await api.getAnalysisResults(propertyId);
+        setAnalysisResults(ar.analyses || {});
+      } catch {
+        // no analysis results yet
       }
 
       // Load decision case
@@ -422,10 +446,10 @@ export default function PropertyDetailPage() {
   );
 
   // Extract parsed fields from pipeline data if available
-  const parsedFields =
-    (latestRun?.summary_json?.parsed_fields as Record<string, unknown>) || {};
+  // Get listing data from the scraped Zillow/Redfin data
+  const ld = listingData || {};
   const listPrice =
-    (parsedFields.list_price as number) ||
+    (ld.price as number) ||
     packet?.price_view?.list_price ||
     undefined;
 
@@ -580,6 +604,7 @@ export default function PropertyDetailPage() {
             decision={decision}
             listPrice={listPrice}
             latestRun={latestRun}
+            listingData={ld}
           />
         )}
         {activeTab === "Pipeline" && (
@@ -692,6 +717,7 @@ function SummaryTab({
   decision,
   listPrice,
   latestRun,
+  listingData,
 }: {
   property: Property;
   watchEntry: WatchlistEntry | null;
@@ -699,9 +725,10 @@ function SummaryTab({
   decision: DecisionCase | null;
   listPrice?: number;
   latestRun: PipelineRunDetail | null;
+  listingData: Record<string, unknown>;
 }) {
-  const parsedFields =
-    (latestRun?.summary_json?.parsed_fields as Record<string, unknown>) || {};
+  // Use listing data from Zillow/Redfin scrape
+  const ld = listingData || {};
 
   return (
     <div className="space-y-6">
@@ -732,8 +759,9 @@ function SummaryTab({
       {/* Price Benchmarks */}
       <PriceBenchmarks
         askPrice={listPrice}
-        zestimate={undefined}
+        zestimate={(ld.zestimate as number) || undefined}
         assessedValue={
+          (ld.tax_assessed_value as number) || (ld.tax_assessed as number) ||
           packet?.price_view?.assessment_value || undefined
         }
         compEstimate={packet?.price_view?.comp_estimate || undefined}
@@ -747,57 +775,57 @@ function SummaryTab({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <MetricCard
             label="Beds"
-            value={parsedFields.beds ? String(parsedFields.beds) : "--"}
+            value={ld.bedrooms || ld.beds ? String(ld.bedrooms || ld.beds) : "--"}
           />
           <MetricCard
             label="Baths"
-            value={parsedFields.baths ? String(parsedFields.baths) : "--"}
+            value={ld.baths || ld.bathrooms ? String(ld.baths || ld.bathrooms) : "--"}
           />
           <MetricCard
             label="Sqft"
             value={
-              parsedFields.sqft
-                ? Number(parsedFields.sqft).toLocaleString()
+              ld.sqft
+                ? Number(ld.sqft).toLocaleString()
                 : "--"
             }
           />
           <MetricCard
             label="Lot"
             value={
-              parsedFields.lot_sqft
-                ? Number(parsedFields.lot_sqft).toLocaleString() + " sqft"
-                : parsedFields.lot_acres
-                  ? String(parsedFields.lot_acres) + " ac"
+              ld.lot_sqft
+                ? Number(ld.lot_sqft).toLocaleString() + " sqft"
+                : ld.lot_acres
+                  ? String(ld.lot_acres) + " ac"
                   : "--"
             }
           />
           <MetricCard
             label="Year Built"
             value={
-              parsedFields.year_built ? String(parsedFields.year_built) : "--"
+              ld.year_built ? String(ld.year_built) : "--"
             }
           />
           <MetricCard
             label="HOA"
             value={
-              parsedFields.hoa_monthly
-                ? formatCurrency(Number(parsedFields.hoa_monthly)) + "/mo"
+              ld.hoa_monthly || ld.hoa
+                ? formatCurrency(Number(ld.hoa_monthly || ld.hoa)) + "/mo"
                 : "--"
             }
           />
           <MetricCard
             label="DOM"
             value={
-              parsedFields.days_on_market
-                ? String(parsedFields.days_on_market)
+              ld.days_on_zillow || ld.dom || ld.days_on_market
+                ? String(ld.days_on_zillow || ld.dom || ld.days_on_market)
                 : "--"
             }
           />
           <MetricCard
             label="CDOM"
             value={
-              parsedFields.cumulative_dom
-                ? String(parsedFields.cumulative_dom)
+              ld.cdom || ld.cumulative_dom
+                ? String(ld.cdom || ld.cumulative_dom)
                 : "--"
             }
           />
