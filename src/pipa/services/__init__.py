@@ -19,6 +19,7 @@ from pipa.services.property_resolver import PropertyResolverService
 from pipa.services.property_service import PropertyService
 from pipa.services.data_refresh import DataRefreshService
 from pipa.services.school_service import SchoolService
+from pipa.services.pipeline_orchestrator import PipelineOrchestrator
 from pipa.services.source_reconciliation import SourceReconciliationService
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "PropertyResolverService",
     "PropertyService",
     "SchoolService",
+    "PipelineOrchestrator",
     "SourceReconciliationService",
 ]

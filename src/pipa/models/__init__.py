@@ -23,6 +23,7 @@ from pipa.models.quote import InsuranceQuote, MortgageQuote, RepairEstimate
 from pipa.models.nearby import NearbyRelationship
 from pipa.models.decision import DecisionCase, DueDiligenceItem, RecommendationSnapshot
 from pipa.models.development import DevelopmentCase, ZoningCase
+from pipa.models.pipeline_run import PipelineRun, PipelineTaskRun
 
 __all__ = [
     "Base",
@@ -70,4 +71,6 @@ __all__ = [
     "DecisionCase", "DueDiligenceItem", "RecommendationSnapshot",
     # development.py
     "DevelopmentCase", "ZoningCase",
+    # pipeline_run.py
+    "PipelineRun", "PipelineTaskRun",
 ]
