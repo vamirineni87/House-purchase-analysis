@@ -2,6 +2,7 @@
 
 from pipa.services.alert_service import AlertService
 from pipa.services.analysis_service import AnalysisService
+from pipa.services.comp_service import CompService
 from pipa.services.county_service import CountyService
 from pipa.services.decision_service import DecisionService
 from pipa.services.development_service import DevelopmentService
@@ -23,6 +24,7 @@ from pipa.services.source_reconciliation import SourceReconciliationService
 __all__ = [
     "AlertService",
     "AnalysisService",
+    "CompService",
     "DataRefreshService",
     "ListingIngestService",
     "CountyService",
