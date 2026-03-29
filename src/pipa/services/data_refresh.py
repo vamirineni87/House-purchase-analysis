@@ -35,18 +35,24 @@ SOURCE_MAP = {
     "walkscore": "walkscore",
 }
 
-# Default TTLs (hours) when no DataFreshnessPolicy row exists
+# Default TTLs (hours) when no DataFreshnessPolicy row exists.
+# For active listings, data can change anytime (price cuts, status changes).
+# County data changes less frequently (weekly assessment updates).
 DEFAULT_TTL: dict[str, int] = {
-    "listing": 4,          # Listing data goes stale fast
-    "parcel": 720,         # County parcel: 30 days
-    "assessment": 720,     # County assessment: 30 days
+    "listing": 1,          # Listing price/status: 1 hour (can change anytime)
+    "zillow": 1,           # Zillow listing data: 1 hour
+    "redfin": 1,           # Redfin listing data: 1 hour
+    "parcel": 4,           # County parcel identity: 4 hours
+    "assessment": 4,       # County assessment: 4 hours
+    "county": 4,           # County general: 4 hours
     "permit": 168,         # Permits: 7 days
-    "deed": 720,           # Deeds: 30 days
-    "schools": 2160,       # School boundaries: 90 days
+    "deed": 720,           # Deeds: 30 days (historical, rarely changes)
+    "schools": 2160,       # School boundaries: 90 days (yearly updates)
     "hazard": 8760,        # Hazard data: 1 year
     "census": 8760,        # Census data: 1 year
     "walkscore": 720,      # Walk score: 30 days
-    "hoa": 720,            # HOA docs: 30 days
+    "hoa": 168,            # HOA docs: 7 days
+    "comp_enrichment": 168, # County comp data: 7 days (sold data doesn't change)
 }
 
 # Default stale behavior per entity type

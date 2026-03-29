@@ -804,25 +804,64 @@ class CompService:
         db: AsyncSession,
         comp_address: str,
         scraper: LoudounParcelScraper | None = None,
+        force_refresh: bool = False,
+        ttl_hours: int = 168,  # 7 days — sold comp data doesn't change often
     ) -> dict:
-        """Scrape Loudoun County for verified details on a comp property.
+        """Get county-verified details for a comp property.
 
-        Returns dict with county-verified fields:
-        - sqft_above_grade (NOT total -- this is what matters for comps)
-        - year_built, full_baths, half_baths, lot_acres
-        - basement_total_sqft, basement_finished_sqft
-        - condition, grade, style, stories
-        - roof_material, exterior_wall
-        - sale_price, sale_date (from county deed records)
-        - assessed_total
+        Checks SourceRecord first — only scrapes if no cached data
+        exists or cached data is older than ttl_hours.
+
+        Returns dict with county-verified fields.
         """
+        normed = _normalize_address(comp_address)
+
+        # --- Check cache: do we already have county data for this address? ---
+        if not force_refresh:
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+
+            cached_records = await db.execute(
+                select(SourceRecord).where(
+                    SourceRecord.source_name.in_(["loudoun_county", "loudoun_parcel", "county_comp_enrichment"]),
+                ).order_by(SourceRecord.fetched_at.desc())
+            )
+            for record in cached_records.scalars().all():
+                payload = record.raw_payload or {}
+                # Check if this record is for the same address
+                cached_addr = payload.get("_search", {}).get("street_name", "")
+                cached_num = payload.get("_search", {}).get("house_number", "")
+                cached_full = f"{cached_num} {cached_addr}".strip().upper()
+
+                # Also check the _summary address
+                summary_addr = _normalize_address(
+                    payload.get("_summary", {}).get("address", "")
+                    or payload.get("Profile", {}).get("_key_values", {}).get("Primary Address", "")
+                )
+
+                if normed in cached_full or normed in summary_addr or cached_full in normed or summary_addr in normed:
+                    if record.fetched_at and record.fetched_at >= cutoff:
+                        logger.info(
+                            "Using cached county data for %s (fetched %s)",
+                            comp_address, record.fetched_at.isoformat(),
+                        )
+                        # Parse from cached payload — same as fresh scrape
+                        county_data = payload
+                        return CompService._parse_all_county_tabs(county_data, comp_address)
+                    else:
+                        logger.info(
+                            "Cached county data for %s is stale (fetched %s, ttl %dh)",
+                            comp_address, record.fetched_at.isoformat(), ttl_hours,
+                        )
+
+        # --- No cache or stale: scrape the county website ---
         owns_scraper = False
         if scraper is None:
             scraper = LoudounParcelScraper(headless=True)
             owns_scraper = True
 
         try:
-            logger.info("Enriching comp from county: %s", comp_address)
+            logger.info("Scraping county for %s (no cache or force_refresh)", comp_address)
             county_data = await scraper.scrape_by_address_string(comp_address)
 
             if county_data.get("_error"):
@@ -833,51 +872,8 @@ class CompService:
                 )
                 return {"_error": county_data["_error"], "address": comp_address}
 
-            # Parse structured fields from county tabs
-            residential = CompService._parse_county_residential(county_data)
-            values = CompService._parse_county_values(county_data)
-            sale = CompService._parse_county_sale(county_data)
-
-            # Also pull from the _summary if the scraper built one
-            summary = county_data.get("_summary", {})
-
-            # Merge everything, preferring directly-parsed values
-            enriched: dict[str, Any] = {"address": comp_address}
-            enriched.update(residential)
-            enriched.update(values)
-            enriched.update(sale)
-
-            # Fill gaps from summary
-            for key in [
-                "year_built", "style", "condition", "grade",
-                "full_baths", "half_baths", "lot_acres",
-                "sqft_above_grade", "basement_total_sqft",
-                "basement_finished_sqft", "foundation",
-                "roof_material", "exterior_wall",
-                "assessed_total",
-            ]:
-                if enriched.get(key) is None and summary.get(key) is not None:
-                    enriched[key] = summary[key]
-
-            # Compute total_sqft = above_grade + finished basement
-            above = _safe_int(enriched.get("sqft_above_grade"))
-            fin_bsmt = _safe_int(enriched.get("basement_finished_sqft"))
-            if above is not None:
-                enriched["sqft_above_grade"] = above
-                if fin_bsmt:
-                    enriched["total_sqft"] = above + fin_bsmt
-                else:
-                    enriched["total_sqft"] = above
-
-            # Convert lot_acres string to float
-            lot = enriched.get("lot_acres")
-            if lot is not None:
-                enriched["lot_acres"] = _safe_float(lot)
-
-            # Store raw county data for audit
-            enriched["_raw_county"] = county_data
-
-            return enriched
+            # Parse all tabs and return enriched data
+            return CompService._parse_all_county_tabs(county_data, comp_address)
 
         finally:
             if owns_scraper:
@@ -1053,7 +1049,82 @@ class CompService:
         }
 
     # ==================================================================
-    # County data parsers
+    # Unified county data parser (used by both cached and fresh paths)
+    # ==================================================================
+
+    @staticmethod
+    def _parse_all_county_tabs(county_data: dict, comp_address: str) -> dict:
+        """Parse ALL county tabs into a single enriched dict.
+
+        Used by both cached (from SourceRecord) and fresh (from scraper) paths.
+        """
+        residential = CompService._parse_county_residential(county_data)
+        values = CompService._parse_county_values(county_data)
+        sale = CompService._parse_county_sale(county_data)
+        profile = CompService._parse_county_profile(county_data)
+        land = CompService._parse_county_land(county_data)
+        detached = CompService._parse_county_detached(county_data)
+
+        summary = county_data.get("_summary", {})
+
+        enriched: dict[str, Any] = {"address": comp_address}
+        enriched.update(residential)
+        enriched.update(values)
+        enriched.update(sale)
+        enriched["profile"] = profile
+        enriched["land"] = land
+        enriched["detached_structures"] = detached
+
+        # Fill gaps from summary
+        for key in [
+            "year_built", "style", "condition", "grade",
+            "full_baths", "half_baths", "lot_acres",
+            "sqft_above_grade", "basement_total_sqft",
+            "basement_finished_sqft", "foundation",
+            "roof_material", "exterior_wall",
+            "assessed_total", "parcel_id", "subdivision",
+        ]:
+            if enriched.get(key) is None and summary.get(key) is not None:
+                enriched[key] = summary[key]
+
+        # Pull parcel_id and subdivision from profile if not in summary
+        if not enriched.get("parcel_id") and profile.get("parcel_id"):
+            enriched["parcel_id"] = profile["parcel_id"]
+        if not enriched.get("subdivision") and profile.get("subdivision"):
+            enriched["subdivision"] = profile["subdivision"]
+
+        # Builder from seller in sale record
+        seller = enriched.get("seller", "")
+        if seller and any(kw in seller.upper() for kw in ["NVR", "HOVNANIAN", "TOLL", "PULTE", "RYAN", "LENNAR", "DR HORTON"]):
+            enriched["builder"] = seller
+
+        # Compute total_livable_sqft = above_grade + finished basement
+        above = _safe_int(enriched.get("sqft_above_grade"))
+        fin_bsmt = _safe_int(enriched.get("basement_finished_sqft"))
+        if above is not None:
+            enriched["sqft_above_grade"] = above
+            if fin_bsmt:
+                enriched["total_livable_sqft"] = above + fin_bsmt
+            else:
+                enriched["total_livable_sqft"] = above
+
+        # Convert lot_acres string to float
+        lot = enriched.get("lot_acres")
+        if lot is not None:
+            enriched["lot_acres"] = _safe_float(lot)
+
+        # Land sqft
+        land_sqft = land.get("land_sqft")
+        if land_sqft:
+            enriched["lot_sqft"] = _safe_int(land_sqft)
+
+        # Store raw county data for full audit trail
+        enriched["_raw_county"] = county_data
+
+        return enriched
+
+    # ==================================================================
+    # Individual tab parsers
     # ==================================================================
 
     @staticmethod
