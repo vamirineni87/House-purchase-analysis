@@ -80,6 +80,46 @@ class PropertySummary(BaseModel):
     created_at: datetime
 
 
+class PropertyIngestRequest(BaseModel):
+    """Schema for ingesting a property from a listing URL or manual address.
+
+    At least one of ``url`` or ``address`` must be provided.
+    """
+
+    url: Optional[str] = Field(None, description="Listing URL from Zillow, Redfin, or Realtor.com")
+    address: Optional[AddressCreate] = Field(None, description="Manual address entry (when no URL)")
+    property_type: str = "single_family"
+
+    def model_post_init(self, __context):
+        if not self.url and not self.address:
+            raise ValueError("At least one of 'url' or 'address' must be provided")
+
+
+class ListingPageSnapshotResponse(BaseModel):
+    """Schema for listing page snapshot in API responses."""
+
+    id: str
+    property_id: str
+    source_site: str
+    listing_url: str
+    scraped_at: datetime
+    parsed_fields: Optional[dict] = None
+    raw_html_path: Optional[str] = None
+    screenshot_path: Optional[str] = None
+    parser_version: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PropertyIngestResponse(BaseModel):
+    """Response from the ingest endpoint — property plus optional snapshot."""
+
+    property: PropertyResponse
+    snapshot: Optional[ListingPageSnapshotResponse] = None
+
+
 class WatchlistEntryCreate(BaseModel):
     """Schema for adding a property to watchlist."""
 

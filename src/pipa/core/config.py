@@ -51,6 +51,8 @@ class ReplacementDefaults(BaseSettings):
 
 
 class CurrentHome(BaseSettings):
+    address: str = "43629 White Cap Ter, Chantilly, VA 20152"
+    county: str = "loudoun"
     purchase_price: float = 0
     purchase_date: str = ""
     current_mortgage_payment: float = 0
@@ -59,6 +61,7 @@ class CurrentHome(BaseSettings):
     filing_status: str = "married"
     years_as_primary: int = 0
     estimated_monthly_rent: float = 0
+    year_built: int = 2011
     annual_property_tax: float = 0
     annual_insurance: float = 0
 

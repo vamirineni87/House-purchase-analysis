@@ -10,6 +10,7 @@ from pipa.models.analysis_models import AnalysisRun, AssumptionSet
 from pipa.models.assessment import AssessmentSnapshot
 from pipa.models.deed import DeedRecord
 from pipa.models.listing import ListingEpisode, ListingSnapshot, PriceEvent, SaleEvent, StatusEvent
+from pipa.models.listing_page import ListingPageSnapshot
 from pipa.models.permit import PermitRecord, PlatRecord, ZoningRecord
 from pipa.models.geometry import GeometrySnapshot, OverlayIntersection
 from pipa.models.component import ComponentEvidence, ComponentSystem
@@ -42,6 +43,8 @@ __all__ = [
     "DeedRecord",
     # listing.py
     "ListingEpisode", "ListingSnapshot", "StatusEvent", "PriceEvent", "SaleEvent",
+    # listing_page.py
+    "ListingPageSnapshot",
     # permit.py
     "PermitRecord", "ZoningRecord", "PlatRecord",
     # geometry.py

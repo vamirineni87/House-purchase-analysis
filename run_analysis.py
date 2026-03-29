@@ -86,15 +86,17 @@ else:
 
 # === CONDITION / CAPEX ===
 print("\n--- CONDITION / REPLACEMENT RESERVE ---")
+# Built 2011. Roof replaced 2021 (per owner/county records).
+# Other components assumed original (2011) unless evidence says otherwise.
 components = [
-    {"component_type": "roof_asphalt_shingle", "estimated_install_year": 2008},
-    {"component_type": "hvac_heat_pump", "estimated_install_year": 2018},
-    {"component_type": "water_heater_tank", "estimated_install_year": 2019},
-    {"component_type": "windows", "estimated_install_year": 2008},
-    {"component_type": "siding_vinyl", "estimated_install_year": 2008},
-    {"component_type": "electrical_panel", "estimated_install_year": 2008},
-    {"component_type": "deck_composite", "estimated_install_year": 2015},
-    {"component_type": "appliances", "estimated_install_year": 2020},
+    {"component_type": "roof_asphalt_shingle", "estimated_install_year": 2021},  # replaced
+    {"component_type": "hvac_heat_pump", "estimated_install_year": 2011},        # original
+    {"component_type": "water_heater_tank", "estimated_install_year": 2011},     # original
+    {"component_type": "windows", "estimated_install_year": 2011},               # original
+    {"component_type": "siding_vinyl", "estimated_install_year": 2011},          # original
+    {"component_type": "electrical_panel", "estimated_install_year": 2011},      # original
+    {"component_type": "deck_composite", "estimated_install_year": 2011},        # original
+    {"component_type": "appliances", "estimated_install_year": 2018},            # est. refresh
 ]
 score = score_property_condition(components, current_year=2026)
 capex = calculate_capex_forecast(components, current_year=2026)
@@ -151,7 +153,7 @@ comps = [
 ]
 appr = run_appraisal_analysis(
     list_price=725000, sqft=3000, beds=4, baths=3.5,
-    year_built=2008, comps=comps,
+    year_built=2011, comps=comps,
 )
 print(f"Value range: ${appr.estimated_value_low:,.0f} - ${appr.estimated_value_mid:,.0f} - ${appr.estimated_value_high:,.0f}")
 print(f"Assessment: {appr.value_assessment}")

@@ -7,6 +7,7 @@ from pipa.services.development_service import DevelopmentService
 from pipa.services.document_service import DocumentService
 from pipa.services.hazard_service import HazardService
 from pipa.services.hoa_service import HOAService
+from pipa.services.listing_ingest import ListingIngestService
 from pipa.services.listing_service import ListingService
 from pipa.services.micro_market import MicroMarketService
 from pipa.services.nearby_discovery import NearbyDiscoveryService
@@ -19,6 +20,7 @@ from pipa.services.source_reconciliation import SourceReconciliationService
 __all__ = [
     "AlertService",
     "AnalysisService",
+    "ListingIngestService",
     "CountyService",
     "DevelopmentService",
     "DocumentService",
