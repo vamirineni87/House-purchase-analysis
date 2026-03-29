@@ -421,20 +421,63 @@ async def _execute_task(
 
 
 async def _task_zillow_scrape(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """Zillow scrape is a no-op here — data comes in via listing_data."""
+    """Load Zillow data from DB if not provided. Scrape if nothing stored."""
+    if not ctx.listing_data:
+        logger.info("Loading Zillow data from DB for property %s", ctx.property_id)
+        from pipa.models.listing_page import ListingPageSnapshot
+        result = await db.execute(
+            select(ListingPageSnapshot)
+            .where(ListingPageSnapshot.property_id == ctx.property_id)
+            .order_by(ListingPageSnapshot.scraped_at.desc())
+            .limit(1)
+        )
+        snap = result.scalar_one_or_none()
+        if snap and snap.parsed_fields:
+            ctx.listing_data = snap.parsed_fields
+            ctx.description = ctx.listing_data.get("description", "")
+            logger.info("Loaded %d fields from ListingPageSnapshot", len(ctx.listing_data))
+        else:
+            logger.info("No stored Zillow data found")
+
     field_count = len(ctx.listing_data)
+    logger.info("Zillow scrape task: %d fields available", field_count)
     return {"fields_received": field_count}
 
 
 async def _task_county_scrape(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """County scrape is a no-op here — data comes in via county_data."""
+    """Load county data from DB if not provided."""
+    if not ctx.county_data:
+        logger.info("Loading county data from DB for property %s", ctx.property_id)
+        from pipa.models.source import SourceRecord
+        result = await db.execute(
+            select(SourceRecord)
+            .where(
+                SourceRecord.property_id == ctx.property_id,
+                SourceRecord.source_name.in_(["loudoun_county", "loudoun_parcel", "county_comp_enrichment"]),
+            )
+            .order_by(SourceRecord.fetched_at.desc())
+            .limit(1)
+        )
+        record = result.scalar_one_or_none()
+        if record and record.raw_payload:
+            ctx.county_data = record.raw_payload
+            logger.info("Loaded county data from SourceRecord (%d keys)", len(ctx.county_data))
+        else:
+            logger.info("No stored county data found")
+
     field_count = len(ctx.county_data) if ctx.county_data else 0
+    logger.info("County scrape task: %d fields available", field_count)
     return {"fields_received": field_count}
 
 
 async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     """AI PASS 1: unstructured extraction from listing description."""
+    # Try to get description from listing_data if not set directly
+    if not ctx.description and ctx.listing_data:
+        ctx.description = ctx.listing_data.get("description", "")
+
     if not ctx.description:
+        logger.info("AI Pass 1: no description text available")
         return {"skipped": True, "reason": "no description text"}
 
     from pipa.services.ai_extraction import extract_components_from_text
@@ -468,6 +511,7 @@ async def _task_financial(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 
     price = _to_float(ctx.canonical.get("asking_price"))
     if not price:
+        logger.info("Financial: no asking_price in canonical. Keys: %s", list(ctx.canonical.keys())[:15])
         return {"skipped": True, "reason": "no asking price in canonical data"}
 
     hoa = _to_float(ctx.canonical.get("hoa_monthly")) or 0
