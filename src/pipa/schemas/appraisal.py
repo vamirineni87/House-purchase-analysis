@@ -24,6 +24,30 @@ class ComparableSale(BaseModel):
     adjusted_price: Optional[float] = None
 
 
+class PriceBenchmarks(BaseModel):
+    """Multiple price benchmarks for cross-referencing the asking price.
+
+    Shows the ask relative to Zestimate, county assessment, and
+    county-derived market estimate (assessment * markup factor).
+    """
+
+    asking_price: float
+    # Zestimate
+    zestimate: Optional[float] = None
+    ask_vs_zestimate: Optional[float] = None  # dollar difference
+    ask_vs_zestimate_pct: Optional[float] = None  # percentage
+    # County assessment
+    county_assessed: Optional[float] = None
+    county_assessed_year: Optional[int] = None
+    ask_vs_assessed: Optional[float] = None
+    ask_vs_assessed_pct: Optional[float] = None
+    # County-derived market estimate (assessment * markup factor)
+    assessment_markup_pct: float = 7.0  # adjustable per area, default 7%
+    county_derived_market_value: Optional[float] = None  # assessed * (1 + markup/100)
+    ask_vs_county_derived: Optional[float] = None
+    ask_vs_county_derived_pct: Optional[float] = None
+
+
 class AppraisalResult(BaseModel):
     """Aggregated appraisal results based on comparable sales."""
 
@@ -35,6 +59,8 @@ class AppraisalResult(BaseModel):
     subject_price_per_sqft: float
     value_assessment: str  # "below_market", "at_market", "above_market"
     confidence: str  # "low", "medium", "high"
+    # Price benchmarks (optional — populated when assessment data is available)
+    price_benchmarks: Optional[PriceBenchmarks] = None
 
 
 class AppraisalRequest(BaseModel):

@@ -13,7 +13,7 @@ from datetime import date
 from statistics import mean
 from typing import Optional
 
-from pipa.schemas.appraisal import AppraisalResult, ComparableSale
+from pipa.schemas.appraisal import AppraisalResult, ComparableSale, PriceBenchmarks
 
 
 def adjust_comparable(
@@ -127,6 +127,48 @@ def determine_confidence(comps: list[ComparableSale]) -> str:
     return "high"
 
 
+def compute_price_benchmarks(
+    asking_price: float,
+    county_assessed: float | None = None,
+    county_assessed_year: int | None = None,
+    zestimate: float | None = None,
+    assessment_markup_pct: float = 7.0,
+) -> PriceBenchmarks:
+    """Compute price benchmarks comparing ask against multiple sources.
+
+    Args:
+        asking_price: the listing ask price.
+        county_assessed: official county assessed value.
+        county_assessed_year: tax year of the assessment.
+        zestimate: Zillow's automated valuation.
+        assessment_markup_pct: % above assessment for market estimate.
+            Default 7% — adjustable per area. Loudoun County assessments
+            typically trail market by 5-10%.
+    """
+    benchmarks = PriceBenchmarks(
+        asking_price=asking_price,
+        assessment_markup_pct=assessment_markup_pct,
+    )
+
+    if zestimate:
+        benchmarks.zestimate = zestimate
+        benchmarks.ask_vs_zestimate = round(asking_price - zestimate, 2)
+        benchmarks.ask_vs_zestimate_pct = round((asking_price / zestimate - 1) * 100, 1)
+
+    if county_assessed:
+        benchmarks.county_assessed = county_assessed
+        benchmarks.county_assessed_year = county_assessed_year
+        benchmarks.ask_vs_assessed = round(asking_price - county_assessed, 2)
+        benchmarks.ask_vs_assessed_pct = round((asking_price / county_assessed - 1) * 100, 1)
+
+        derived = county_assessed * (1 + assessment_markup_pct / 100)
+        benchmarks.county_derived_market_value = round(derived, 2)
+        benchmarks.ask_vs_county_derived = round(asking_price - derived, 2)
+        benchmarks.ask_vs_county_derived_pct = round((asking_price / derived - 1) * 100, 1)
+
+    return benchmarks
+
+
 def run_appraisal_analysis(
     list_price: float,
     sqft: int,
@@ -135,6 +177,10 @@ def run_appraisal_analysis(
     year_built: Optional[int] = None,
     comps: list[ComparableSale] | None = None,
     appreciation_rate: float = 0.03,
+    county_assessed: float | None = None,
+    county_assessed_year: int | None = None,
+    zestimate: float | None = None,
+    assessment_markup_pct: float = 7.0,
 ) -> AppraisalResult:
     """Run end-to-end appraisal analysis. Single entry point.
 
@@ -179,6 +225,17 @@ def run_appraisal_analysis(
     subject_ppsf = list_price / max(sqft, 1)
     market_ppsf = mid / max(sqft, 1) if mid else subject_ppsf
 
+    # Compute price benchmarks if assessment/zestimate data available
+    benchmarks = None
+    if county_assessed or zestimate:
+        benchmarks = compute_price_benchmarks(
+            asking_price=list_price,
+            county_assessed=county_assessed,
+            county_assessed_year=county_assessed_year,
+            zestimate=zestimate,
+            assessment_markup_pct=assessment_markup_pct,
+        )
+
     return AppraisalResult(
         comparables=adjusted_comps,
         estimated_value_low=round(low, 2),
@@ -188,4 +245,5 @@ def run_appraisal_analysis(
         subject_price_per_sqft=round(subject_ppsf, 2),
         value_assessment=assessment,
         confidence=confidence,
+        price_benchmarks=benchmarks,
     )
