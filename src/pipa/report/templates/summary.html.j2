@@ -1,0 +1,82 @@
+<section class="section" id="summary">
+  <h2 class="section-title">Property Overview</h2>
+
+  <div class="card-grid">
+    {% if property.get("list_price") %}
+    <div class="card">
+      <span class="card-label">List Price</span>
+      <span class="card-value">{{ property.list_price | currency }}</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("list_price") and property.get("square_feet") and property.square_feet > 0 %}
+    <div class="card">
+      <span class="card-label">Price per Sqft</span>
+      <span class="card-value">{{ (property.list_price / property.square_feet) | currency }}</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("bedrooms") is not none and property.get("bathrooms") is not none %}
+    <div class="card">
+      <span class="card-label">Beds / Baths</span>
+      <span class="card-value">{{ property.bedrooms }} bd / {{ property.bathrooms | number(1) }} ba</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("square_feet") %}
+    <div class="card">
+      <span class="card-label">Square Feet</span>
+      <span class="card-value">{{ property.square_feet | number }} sqft</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("year_built") %}
+    <div class="card">
+      <span class="card-label">Year Built</span>
+      <span class="card-value">{{ property.year_built }}</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("property_type") %}
+    <div class="card">
+      <span class="card-label">Property Type</span>
+      <span class="card-value">{{ property.property_type | replace("_", " ") | title }}</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("hoa_monthly") and property.hoa_monthly > 0 %}
+    <div class="card">
+      <span class="card-label">HOA</span>
+      <span class="card-value">{{ property.hoa_monthly | currency }} / mo</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("lot_size_sqft") %}
+    <div class="card">
+      <span class="card-label">Lot Size</span>
+      <span class="card-value">{{ property.lot_size_sqft | number }} sqft</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("garage_spaces") and property.garage_spaces > 0 %}
+    <div class="card">
+      <span class="card-label">Garage</span>
+      <span class="card-value">{{ property.garage_spaces }}-car</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("days_on_market") is not none %}
+    <div class="card">
+      <span class="card-label">Days on Market</span>
+      <span class="card-value">{{ property.days_on_market }}</span>
+    </div>
+    {% endif %}
+
+    {% if property.get("address", {}).get("county") %}
+    <div class="card">
+      <span class="card-label">County</span>
+      <span class="card-value">{{ property.address.county | title }}</span>
+    </div>
+    {% endif %}
+  </div>
+</section>

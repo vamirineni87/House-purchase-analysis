@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Property Analysis — {{ property.get("address", {}).get("street", "Unknown") }}</title>
+  <style>{{ css }}</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Property Intelligence Report</h1>
+      <p class="subtitle">
+        {{ property.get("address", {}).get("street", "") }},
+        {{ property.get("address", {}).get("city", "") }},
+        {{ property.get("address", {}).get("state", "VA") }}
+        {{ property.get("address", {}).get("zip_code", "") }}
+      </p>
+      {% if property.get("address", {}).get("county") %}
+      <p class="county">{{ property["address"]["county"] | title }} County</p>
+      {% endif %}
+      <p class="date">Generated {{ generated_at }}</p>
+    </header>
+
+    <main>
+      {% include "summary.html.j2" %}
+
+      {% if analyses.get("financial") %}
+      {% include "financial.html.j2" %}
+      {% endif %}
+
+      {% if analyses.get("appraisal") %}
+      <section class="section" id="appraisal">
+        <h2 class="section-title">Appraisal Analysis</h2>
+        <div class="card-grid">
+          <div class="card">
+            <span class="card-label">Estimated Value (Mid)</span>
+            <span class="card-value">{{ analyses.appraisal.estimated_value_mid | currency }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Range</span>
+            <span class="card-value-small">{{ analyses.appraisal.estimated_value_low | currency }} — {{ analyses.appraisal.estimated_value_high | currency }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Market Assessment</span>
+            <span class="card-value-small">{{ analyses.appraisal.value_assessment | replace("_", " ") | title }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Confidence</span>
+            <span class="card-value-small">{{ analyses.appraisal.confidence | title }}</span>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if analyses.get("neighborhood") %}
+      <section class="section" id="neighborhood">
+        <h2 class="section-title">Neighborhood Analysis</h2>
+        <div class="card-grid">
+          {% if analyses.neighborhood.composite_score is not none %}
+          <div class="card">
+            <span class="card-label">Composite Score</span>
+            <span class="card-value">{{ analyses.neighborhood.composite_score | number(1) }}</span>
+            <span class="card-detail">out of 100</span>
+          </div>
+          {% endif %}
+          <div class="card">
+            <span class="card-label">Data Completeness</span>
+            <span class="card-value">{{ (analyses.neighborhood.data_completeness * 100) | number(0) }}%</span>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if analyses.get("tax") %}
+      <section class="section" id="tax">
+        <h2 class="section-title">Tax Analysis</h2>
+        <div class="card-grid">
+          <div class="card">
+            <span class="card-label">Annual Tax Benefit</span>
+            <span class="card-value">{{ analyses.tax.total_annual_tax_benefit | currency }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Monthly Cost Reduction</span>
+            <span class="card-value">{{ analyses.tax.effective_monthly_cost_reduction | currency }}</span>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if analyses.get("insurance") %}
+      <section class="section" id="insurance">
+        <h2 class="section-title">Insurance Analysis</h2>
+        <div class="card-grid">
+          <div class="card">
+            <span class="card-label">Total Annual Insurance</span>
+            <span class="card-value">{{ analyses.insurance.total_annual_insurance | currency }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Monthly Cost</span>
+            <span class="card-value">{{ analyses.insurance.total_monthly_insurance | currency }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">Risk-Adjusted Monthly</span>
+            <span class="card-value">{{ analyses.insurance.risk_adjusted_monthly_cost | currency }}</span>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if analyses.get("investment") %}
+      <section class="section" id="investment">
+        <h2 class="section-title">Investment Analysis</h2>
+        <div class="card-grid">
+          <div class="card">
+            <span class="card-label">5-Year Net Worth Impact</span>
+            <span class="card-value">{{ analyses.investment.net_worth_impact_5yr | currency }}</span>
+          </div>
+          <div class="card">
+            <span class="card-label">10-Year Net Worth Impact</span>
+            <span class="card-value">{{ analyses.investment.net_worth_impact_10yr | currency }}</span>
+          </div>
+          {% if analyses.investment.rent_vs_buy %}
+          <div class="card">
+            <span class="card-label">Rent vs Buy</span>
+            <span class="card-value-small badge badge-{{ 'positive' if analyses.investment.rent_vs_buy.recommendation == 'buy' else 'negative' if analyses.investment.rent_vs_buy.recommendation == 'rent' else 'neutral' }}">
+              {{ analyses.investment.rent_vs_buy.recommendation | title }}
+            </span>
+          </div>
+          {% endif %}
+        </div>
+      </section>
+      {% endif %}
+    </main>
+
+    <footer>
+      <p>Generated by PIPA — Property Intelligence Platform v0.1.0</p>
+      <p class="disclaimer">This report is for informational purposes only and does not constitute financial, legal, or real estate advice. Consult qualified professionals before making purchase decisions.</p>
+    </footer>
+  </div>
+</body>
+</html>

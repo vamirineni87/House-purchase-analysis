@@ -1,0 +1,215 @@
+<section class="section" id="financial">
+  <h2 class="section-title">Financial Analysis</h2>
+
+  {# ---- Loan Scenarios Comparison ---- #}
+  {% if analyses.financial.get("scenarios") %}
+  <h3>Loan Scenarios</h3>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          {% for scenario in analyses.financial.scenarios %}
+          <th>{{ scenario.name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Down Payment</td>
+          {% for scenario in analyses.financial.scenarios %}
+          <td>{{ scenario.down_payment | currency }} ({{ scenario.down_payment_pct | pct(1) }})</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>Loan Amount</td>
+          {% for scenario in analyses.financial.scenarios %}
+          <td>{{ scenario.loan_amount | currency }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>Interest Rate</td>
+          {% for scenario in analyses.financial.scenarios %}
+          <td>{{ scenario.interest_rate | pct(3) }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>Term</td>
+          {% for scenario in analyses.financial.scenarios %}
+          <td>{{ scenario.term_years }} years</td>
+          {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {# ---- Monthly Payment Breakdown ---- #}
+  {% if analyses.financial.get("payment_breakdowns") and analyses.financial.get("scenarios") %}
+  <h3>Monthly Payment Breakdown</h3>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Component</th>
+          {% for scenario in analyses.financial.scenarios %}
+          <th>{{ scenario.name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Principal &amp; Interest</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>{{ (bd.principal + bd.interest) | currency }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="indent">Principal</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>{{ bd.principal | currency }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td class="indent">Interest</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>{{ bd.interest | currency }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>Property Tax</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>{{ bd.property_tax | currency }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>Homeowners Insurance</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>{{ bd.homeowners_insurance | currency }}</td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>PMI</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>
+            {% if bd.pmi > 0 %}
+              {{ bd.pmi | currency }}
+            {% else %}
+              <span class="text-positive">None</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td>HOA</td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td>
+            {% if bd.hoa > 0 %}
+              {{ bd.hoa | currency }}
+            {% else %}
+              None
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        <tr class="total-row">
+          <td><strong>Total Monthly Payment</strong></td>
+          {% for scenario in analyses.financial.scenarios %}
+          {% set bd = analyses.financial.payment_breakdowns[scenario.name] %}
+          <td><strong>{{ bd.total | currency }}</strong></td>
+          {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {# ---- Closing Costs ---- #}
+  {% if analyses.financial.get("closing_costs") %}
+  <h3>Closing Costs</h3>
+  <div class="table-wrapper">
+    <table class="table-narrow">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Loan Origination</td>
+          <td>{{ analyses.financial.closing_costs.loan_origination | currency }}</td>
+        </tr>
+        <tr>
+          <td>Appraisal Fee</td>
+          <td>{{ analyses.financial.closing_costs.appraisal_fee | currency }}</td>
+        </tr>
+        <tr>
+          <td>Title Insurance</td>
+          <td>{{ analyses.financial.closing_costs.title_insurance | currency }}</td>
+        </tr>
+        <tr>
+          <td>Escrow Fees</td>
+          <td>{{ analyses.financial.closing_costs.escrow_fees | currency }}</td>
+        </tr>
+        <tr>
+          <td>Recording Fees</td>
+          <td>{{ analyses.financial.closing_costs.recording_fees | currency }}</td>
+        </tr>
+        <tr>
+          <td>Prepaid Taxes</td>
+          <td>{{ analyses.financial.closing_costs.prepaid_taxes | currency }}</td>
+        </tr>
+        <tr>
+          <td>Prepaid Insurance</td>
+          <td>{{ analyses.financial.closing_costs.prepaid_insurance | currency }}</td>
+        </tr>
+        <tr>
+          <td>Inspection Fees</td>
+          <td>{{ analyses.financial.closing_costs.inspection_fees | currency }}</td>
+        </tr>
+        {% if analyses.financial.closing_costs.other > 0 %}
+        <tr>
+          <td>Other</td>
+          <td>{{ analyses.financial.closing_costs.other | currency }}</td>
+        </tr>
+        {% endif %}
+        <tr class="total-row">
+          <td><strong>Total Closing Costs</strong></td>
+          <td><strong>{{ analyses.financial.closing_costs.total | currency }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {# ---- Cash Needed at Closing ---- #}
+  {% if analyses.financial.get("cash_needed_at_closing") %}
+  <h3>Cash Needed at Closing</h3>
+  <div class="table-wrapper">
+    <table class="table-narrow">
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>Cash Required</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, amount in analyses.financial.cash_needed_at_closing.items() %}
+        <tr>
+          <td>{{ name }}</td>
+          <td><strong>{{ amount | currency }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
