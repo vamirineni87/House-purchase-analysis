@@ -188,6 +188,9 @@ class DataRefreshService:
             is_stale = True
             if last_fetched is not None:
                 cutoff = now - timedelta(hours=ttl_hours)
+                # Handle naive vs aware datetime comparison
+                if last_fetched.tzinfo is None:
+                    last_fetched = last_fetched.replace(tzinfo=timezone.utc)
                 is_stale = last_fetched < cutoff
 
             freshness[source_slug] = {
