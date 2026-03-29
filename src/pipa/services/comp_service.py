@@ -1,10 +1,14 @@
 """Automated comparable sales sourcing and enrichment.
 
-Flow:
-1. Find comp candidates from Zillow/Redfin/Realtor nearby sold + County neighborhood sales
-2. For each comp, scrape Loudoun County for verified details
-3. Run appraisal adjustments using county-verified data
-4. Store everything as evidence
+Two-stage comp system:
+
+QUICK COMP — runs automatically on every new listing, instant, no county scraping.
+    Finds candidates from already-scraped listing data, filters by similarity,
+    produces a rough value band from portal prices.
+
+DEEP COMP — runs only when user clicks "Run Deep Comp" for shortlisted homes.
+    County-scrapes top candidates, runs full appraisal adjustment engine,
+    produces county-verified value range with confidence score.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import hashlib
 import json
 import logging
 import re
+import statistics
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
@@ -28,11 +33,11 @@ from pipa.models.listing_page import ListingPageSnapshot
 from pipa.models.property import AddressHistory, Property
 from pipa.models.source import EvidenceItem, SourceRecord
 from pipa.schemas.appraisal import ComparableSale
-from pipa.schemas.comp import CompCandidate, EnrichedComp
+from pipa.schemas.comp import CompCandidate, DeepCompResult, EnrichedComp, QuickCompResult
 
 logger = logging.getLogger(__name__)
 
-_CODE_VERSION = "0.1.0"
+_CODE_VERSION = "0.2.0"
 
 
 def _input_hash(data: dict) -> str:
@@ -90,18 +95,350 @@ def _normalize_address(addr: str) -> str:
 
 
 class CompService:
-    """Automated comparable sales sourcing and enrichment.
+    """2-stage comp system: quick comp (auto) + deep comp (on-demand).
 
-    Flow:
-    1. Find comp candidates from listing site nearby sold + County neighborhood sales
-    2. For each comp, scrape Loudoun County for verified details
-    3. Run appraisal adjustments using county-verified data
-    4. Store everything as evidence
+    QUICK COMP: fast (<2s), uses only already-scraped listing data.
+    DEEP COMP: slow (~2 min), county-scrapes top candidates for verification.
     """
 
-    # ------------------------------------------------------------------
-    # Step 1: Find comp candidates
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # QUICK COMP — runs on every listing, instant, no county scraping
+    # ==================================================================
+
+    @staticmethod
+    async def quick_comp(
+        db: AsyncSession,
+        property_id: str,
+        subject_data: dict | None = None,
+    ) -> dict:
+        """Fast comp analysis — no county scraping.
+
+        1. Find 10-20 candidates from listing nearby + county neighborhood
+        2. Filter to 5-8 likely comps by similarity to subject
+        3. Produce rough value band from portal prices
+        4. Quick confidence score
+        5. Asking vs comps assessment
+
+        Returns QuickCompResult dict.
+        """
+        # Load subject data if not provided
+        if subject_data is None:
+            subject_data = await CompService._load_subject_data(db, property_id)
+
+        list_price = _safe_float(subject_data.get("list_price")) or 0
+
+        # Find all candidates from stored data (no external calls)
+        all_candidates = await CompService.find_comp_candidates(db, property_id)
+
+        # Separate by status
+        sold = [c for c in all_candidates if c.status == "sold"]
+        active = [c for c in all_candidates if c.status == "active"]
+        pending = [c for c in all_candidates if c.status in ("pending", "contingent")]
+
+        # Filter sold comps to likely matches based on subject
+        filtered = CompService.filter_comps(sold, subject_data)
+
+        # Cap at 8 best matches
+        filtered = filtered[:8]
+
+        # Compute rough value band from filtered comps
+        rough_value_band = CompService.compute_quick_value_band(filtered, subject_data)
+
+        # Assess confidence
+        avg_similarity = 0.0
+        if filtered:
+            scores = [c.similarity_score or 0.0 for c in filtered]
+            avg_similarity = statistics.mean(scores)
+
+        # Date spread: how many months between oldest and newest comp
+        date_spread = CompService._compute_date_spread(filtered)
+        quick_confidence = CompService.assess_confidence(
+            len(filtered), avg_similarity, date_spread
+        )
+
+        # Warnings
+        warnings: list[str] = []
+        if len(filtered) < 3:
+            warnings.append("Few comparable sales found in the area")
+        if len(filtered) == 0:
+            warnings.append("No comparable sales found — value band is unreliable")
+        if date_spread > 5:
+            warnings.append("Comp sales span more than 5 months — market may have shifted")
+        old_only = all(
+            (c.date or "") < (date.today().replace(day=1).isoformat())
+            for c in filtered if c.date
+        )
+        if old_only and filtered:
+            warnings.append("All comps are from prior months — no very recent sales")
+        if len(active) == 0 and len(pending) == 0:
+            warnings.append("No active or pending listings found for market context")
+
+        # Assessment context: try to load county assessment if available
+        assessment_context = await CompService._load_assessment_context(db, property_id)
+
+        # Asking vs comps
+        asking_vs_comps = "at"
+        if rough_value_band and rough_value_band.get("mid"):
+            mid = rough_value_band["mid"]
+            if list_price > 0:
+                pct = (list_price - mid) / mid if mid else 0
+                if pct < -0.05:
+                    asking_vs_comps = "below"
+                elif pct > 0.05:
+                    asking_vs_comps = "above"
+                else:
+                    asking_vs_comps = "at"
+
+        result = {
+            "candidates": [c.model_dump() for c in all_candidates],
+            "filtered_comps": [c.model_dump() for c in filtered],
+            "sold_count": len(sold),
+            "active_count": len(active),
+            "pending_count": len(pending),
+            "rough_value_band": rough_value_band,
+            "quick_confidence": quick_confidence,
+            "warnings": warnings,
+            "assessment_context": assessment_context,
+            "asking_vs_comps": asking_vs_comps,
+        }
+
+        # Store as analysis run for retrieval
+        run_input = {
+            "property_id": property_id,
+            "subject_data": subject_data,
+            "type": "quick_comp",
+        }
+        run = AnalysisRun(
+            property_id=property_id,
+            analysis_type="quick_comp",
+            ruleset_version="1.0.0",
+            code_version=_CODE_VERSION,
+            input_snapshot_hash=_input_hash(run_input),
+            output_json=result,
+            computed_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        await db.flush()
+
+        return result
+
+    # ==================================================================
+    # DEEP COMP — shortlisted homes only, county-verified
+    # ==================================================================
+
+    @staticmethod
+    async def deep_comp(
+        db: AsyncSession,
+        property_id: str,
+        subject_data: dict | None = None,
+        max_comps: int = 6,
+    ) -> dict:
+        """County-verified comp analysis — slow (~2 min).
+
+        1. Find candidates (reuse quick_comp candidates if available)
+        2. Rank top 4-8 by similarity to subject
+        3. County-enrich ONLY those top candidates
+        4. Run full appraisal adjustment engine on county-verified data
+        5. Output comp pack with value range + confidence
+
+        Returns DeepCompResult dict.
+        """
+        # Load subject data
+        if subject_data is None:
+            subject_data = await CompService._load_subject_data(db, property_id)
+
+        list_price = subject_data.get("list_price", 0)
+        sqft = subject_data.get("sqft", 0)
+        beds = subject_data.get("beds", 0)
+        baths = subject_data.get("baths", 0.0)
+        year_built = subject_data.get("year_built")
+
+        # Find all candidates and separate by status
+        all_candidates = await CompService.find_comp_candidates(db, property_id)
+        sold_candidates = [c for c in all_candidates if c.status == "sold"]
+        active_candidates = [c for c in all_candidates if c.status == "active"]
+        pending_candidates = [c for c in all_candidates if c.status in ("pending", "contingent")]
+
+        # Filter and rank sold candidates by similarity
+        ranked_sold = CompService.filter_comps(sold_candidates, subject_data)
+
+        logger.info(
+            "Deep comp candidates: %d sold (ranked), %d active, %d pending",
+            len(ranked_sold), len(active_candidates), len(pending_candidates),
+        )
+
+        # County-enrich only the top candidates
+        top_candidates = ranked_sold[:max_comps]
+        enriched_comps = await CompService._enrich_candidates(
+            db, property_id, top_candidates
+        )
+
+        # Convert EnrichedComp -> ComparableSale for appraisal engine
+        comparable_sales: list[ComparableSale] = []
+        for comp in enriched_comps:
+            comp_sqft = comp.sqft_above_grade or comp.total_sqft or 0
+            comp_baths = (comp.full_baths or 0) + (comp.half_baths or 0) * 0.5
+            sale_date = _parse_date(comp.sale_date)
+            if sale_date is None:
+                sale_date = date.today()
+
+            comp_beds = beds  # default to subject beds if county has no data
+
+            cs = ComparableSale(
+                address=comp.address,
+                sale_price=comp.sale_price,
+                sale_date=sale_date,
+                square_feet=comp_sqft,
+                bedrooms=comp_beds,
+                bathrooms=comp_baths,
+                year_built=comp.year_built,
+                price_per_sqft=round(comp.sale_price / max(comp_sqft, 1), 2),
+            )
+            comparable_sales.append(cs)
+
+        # Run appraisal analysis
+        appraisal_result = run_appraisal_analysis(
+            list_price=list_price,
+            sqft=sqft,
+            beds=beds,
+            baths=baths,
+            year_built=year_built,
+            comps=comparable_sales,
+        )
+
+        # Build adjustments summary (per-comp explanation)
+        adjustments_summary: dict[str, Any] = {}
+        for comp_result in (appraisal_result.comparables or []):
+            adjustments_summary[comp_result.address] = {
+                "adjustments": comp_result.adjustments,
+                "adjusted_price": comp_result.adjusted_price,
+                "net_adjustment_pct": comp_result.net_adjustment_pct,
+            }
+
+        # Value range from adjusted comps
+        value_range: dict[str, Any] = {}
+        if appraisal_result.comparables:
+            adj_prices = [
+                c.adjusted_price for c in appraisal_result.comparables
+                if c.adjusted_price
+            ]
+            if adj_prices:
+                value_range = {
+                    "low": min(adj_prices),
+                    "mid": round(statistics.median(adj_prices), 0),
+                    "high": max(adj_prices),
+                }
+
+        # Detect conflicts
+        conflicts: list[dict] = []
+        for comp in enriched_comps:
+            if comp.sqft_conflict:
+                conflicts.append({
+                    "address": comp.address,
+                    "field": "sqft",
+                    "listing_value": comp.zillow_sqft,
+                    "county_value": comp.county_sqft,
+                    "note": (
+                        f"Listing site reports {comp.zillow_sqft} sqft, "
+                        f"county above-grade SFLA is {comp.county_sqft} sqft "
+                        f"(>10% difference). County value used for adjustments."
+                    ),
+                })
+
+        # Data quality summary
+        county_verified = sum(1 for c in enriched_comps if c.county_sqft is not None)
+        avg_adjustment = 0.0
+        if appraisal_result.comparables:
+            total_adj = sum(
+                abs(sum(c.adjustments.values()))
+                for c in appraisal_result.comparables
+                if c.adjustments
+            )
+            avg_adjustment = total_adj / len(appraisal_result.comparables)
+
+        data_quality = {
+            "comp_count": len(enriched_comps),
+            "county_verified_count": county_verified,
+            "avg_adjustment": round(avg_adjustment, 2),
+            "confidence": appraisal_result.confidence,
+        }
+
+        # Unresolved unknowns
+        unresolved: list[str] = []
+        for comp in enriched_comps:
+            if comp.sqft_above_grade is None:
+                unresolved.append(f"{comp.address}: county sqft not available")
+            if comp.year_built is None:
+                unresolved.append(f"{comp.address}: year built unknown")
+            if comp.condition is None:
+                unresolved.append(f"{comp.address}: condition not rated by county")
+
+        # Market context
+        market_context: dict[str, Any] = {
+            "active_count": len(active_candidates),
+            "pending_count": len(pending_candidates),
+            "sold_count": len(sold_candidates),
+        }
+        if active_candidates:
+            active_prices = [c.price for c in active_candidates if c.price]
+            if active_prices:
+                market_context["active_price_range"] = {
+                    "low": min(active_prices),
+                    "high": max(active_prices),
+                    "median": sorted(active_prices)[len(active_prices) // 2],
+                }
+                market_context["asking_vs_active"] = (
+                    "below" if list_price < min(active_prices)
+                    else "above" if list_price > max(active_prices)
+                    else "within"
+                )
+        if pending_candidates:
+            pending_prices = [c.price for c in pending_candidates if c.price]
+            if pending_prices:
+                market_context["pending_price_range"] = {
+                    "low": min(pending_prices),
+                    "high": max(pending_prices),
+                }
+
+        result = {
+            "sold_comps": [c.model_dump() for c in enriched_comps],
+            "active_listings": [c.model_dump() for c in active_candidates],
+            "pending_listings": [c.model_dump() for c in pending_candidates],
+            "appraisal": appraisal_result.model_dump(),
+            "adjustments_summary": adjustments_summary,
+            "value_range": value_range,
+            "confidence": appraisal_result.confidence or "low",
+            "data_quality": data_quality,
+            "conflicts": conflicts,
+            "market_context": market_context,
+            "unresolved_unknowns": unresolved,
+        }
+
+        # Store analysis run
+        run_input = {
+            "property_id": property_id,
+            "subject_data": subject_data,
+            "max_comps": max_comps,
+            "comp_addresses": [c.address for c in enriched_comps],
+            "type": "deep_comp",
+        }
+        run = AnalysisRun(
+            property_id=property_id,
+            analysis_type="deep_comp",
+            ruleset_version="1.0.0",
+            code_version=_CODE_VERSION,
+            input_snapshot_hash=_input_hash(run_input),
+            output_json=result,
+            computed_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        await db.flush()
+
+        return result
+
+    # ==================================================================
+    # SHARED: Find comp candidates (used by both quick and deep)
+    # ==================================================================
 
     @staticmethod
     async def find_comp_candidates(
@@ -180,6 +517,8 @@ class CompService:
                         "beds": _safe_int(entry.get("beds")),
                         "baths": _safe_float(entry.get("baths")),
                         "days_on_market": _safe_int(entry.get("days_on_market") or entry.get("dom")),
+                        "year_built": _safe_int(entry.get("year_built")),
+                        "property_type": entry.get("property_type") or entry.get("homeType"),
                     })
 
         # --- Source 2: County SourceRecords (neighborhood sales) ---
@@ -239,9 +578,226 @@ class CompService:
 
         return [CompCandidate(**c) for c in filtered]
 
-    # ------------------------------------------------------------------
-    # Step 2: Enrich a single comp from county
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # SHARED: Filter comps by similarity to subject
+    # ==================================================================
+
+    @staticmethod
+    def filter_comps(
+        candidates: list[CompCandidate],
+        subject_data: dict,
+    ) -> list[CompCandidate]:
+        """Filter candidates to likely comps based on subject property.
+
+        Filters:
+        - same property type (if known)
+        - sqft within +/-30% of subject
+        - year_built within +/-15 years
+        - beds within +/-1
+        - baths within +/-1
+        - sold within last 6 months (already done in find_comp_candidates)
+
+        Returns sorted by similarity score (best match first), with
+        similarity_score set on each candidate.
+        """
+        subject_sqft = _safe_int(subject_data.get("sqft")) or 0
+        subject_year = _safe_int(subject_data.get("year_built"))
+        subject_beds = _safe_int(subject_data.get("beds")) or 0
+        subject_baths = _safe_float(subject_data.get("baths")) or 0.0
+        subject_type = (subject_data.get("property_type") or "").lower()
+
+        scored: list[CompCandidate] = []
+
+        for c in candidates:
+            # --- Hard filters ---
+
+            # Property type filter (skip if either side unknown)
+            if subject_type and c.property_type:
+                if subject_type != c.property_type.lower():
+                    continue
+
+            # Sqft filter: within +/-30% (skip if unknown)
+            if subject_sqft and c.sqft:
+                pct = abs(c.sqft - subject_sqft) / subject_sqft
+                if pct > 0.30:
+                    continue
+
+            # Year built filter: within +/-15 years (skip if unknown)
+            if subject_year and c.year_built:
+                if abs(c.year_built - subject_year) > 15:
+                    continue
+
+            # Beds filter: within +/-1 (skip if unknown)
+            if subject_beds and c.beds:
+                if abs(c.beds - subject_beds) > 1:
+                    continue
+
+            # Baths filter: within +/-1 (skip if unknown)
+            if subject_baths and c.baths:
+                if abs(c.baths - subject_baths) > 1.0:
+                    continue
+
+            # --- Similarity scoring (0-100) ---
+            score = CompService._compute_similarity(
+                c, subject_sqft, subject_year, subject_beds, subject_baths
+            )
+            c.similarity_score = round(score, 1)
+            scored.append(c)
+
+        # Sort by similarity score descending (best match first)
+        scored.sort(key=lambda x: x.similarity_score or 0, reverse=True)
+        return scored
+
+    @staticmethod
+    def _compute_similarity(
+        comp: CompCandidate,
+        subject_sqft: int,
+        subject_year: int | None,
+        subject_beds: int,
+        subject_baths: float,
+    ) -> float:
+        """Compute a 0-100 similarity score for a comp vs subject.
+
+        Weights:
+        - sqft closeness:  35 pts
+        - year built:      20 pts
+        - beds match:      15 pts
+        - baths match:     15 pts
+        - recency of sale: 15 pts
+        """
+        score = 0.0
+
+        # Sqft closeness (35 pts): 0% diff = 35, 30% diff = 0
+        if subject_sqft and comp.sqft:
+            pct_diff = abs(comp.sqft - subject_sqft) / subject_sqft
+            score += max(0, 35 * (1 - pct_diff / 0.30))
+        elif not comp.sqft:
+            # Unknown sqft — give partial credit
+            score += 10
+
+        # Year built (20 pts): 0 year diff = 20, 15 year diff = 0
+        if subject_year and comp.year_built:
+            year_diff = abs(comp.year_built - subject_year)
+            score += max(0, 20 * (1 - year_diff / 15))
+        elif not comp.year_built:
+            score += 5
+
+        # Beds match (15 pts): exact = 15, +-1 = 8
+        if subject_beds and comp.beds:
+            bed_diff = abs(comp.beds - subject_beds)
+            if bed_diff == 0:
+                score += 15
+            elif bed_diff == 1:
+                score += 8
+        elif not comp.beds:
+            score += 5
+
+        # Baths match (15 pts): exact = 15, +-0.5 = 10, +-1 = 5
+        if subject_baths and comp.baths:
+            bath_diff = abs(comp.baths - subject_baths)
+            if bath_diff <= 0.1:
+                score += 15
+            elif bath_diff <= 0.5:
+                score += 10
+            elif bath_diff <= 1.0:
+                score += 5
+        elif not comp.baths:
+            score += 5
+
+        # Recency (15 pts): today = 15, 6 months ago = 0
+        if comp.date:
+            sale_date = _parse_date(comp.date)
+            if sale_date:
+                days_ago = (date.today() - sale_date).days
+                score += max(0, 15 * (1 - days_ago / 180))
+        else:
+            score += 3  # unknown date, small credit
+
+        return score
+
+    # ==================================================================
+    # SHARED: Quick value band computation
+    # ==================================================================
+
+    @staticmethod
+    def compute_quick_value_band(
+        comps: list[CompCandidate],
+        subject_data: dict,
+    ) -> dict:
+        """Compute rough value band from portal prices.
+
+        Uses price per sqft from comps applied to subject sqft.
+        Returns {low, mid, high}. Empty dict if insufficient data.
+        """
+        subject_sqft = _safe_int(subject_data.get("sqft")) or 0
+
+        if not comps or not subject_sqft:
+            # Fall back to raw prices if no sqft data
+            prices = [c.price for c in comps if c.price]
+            if not prices:
+                return {}
+            return {
+                "low": min(prices),
+                "mid": round(statistics.median(prices), 0),
+                "high": max(prices),
+            }
+
+        # Compute $/sqft for each comp that has both price and sqft
+        ppsf_values: list[float] = []
+        for c in comps:
+            if c.price and c.sqft and c.sqft > 0:
+                ppsf_values.append(c.price / c.sqft)
+
+        if ppsf_values:
+            # Apply $/sqft to subject sqft
+            low_ppsf = min(ppsf_values)
+            high_ppsf = max(ppsf_values)
+            mid_ppsf = statistics.median(ppsf_values)
+
+            return {
+                "low": round(low_ppsf * subject_sqft, 0),
+                "mid": round(mid_ppsf * subject_sqft, 0),
+                "high": round(high_ppsf * subject_sqft, 0),
+            }
+
+        # Fallback: use raw prices
+        prices = [c.price for c in comps if c.price]
+        if not prices:
+            return {}
+        return {
+            "low": min(prices),
+            "mid": round(statistics.median(prices), 0),
+            "high": max(prices),
+        }
+
+    # ==================================================================
+    # SHARED: Confidence assessment
+    # ==================================================================
+
+    @staticmethod
+    def assess_confidence(
+        comp_count: int,
+        avg_similarity: float,
+        date_spread: float,
+    ) -> str:
+        """Rate comp confidence: strong/moderate/weak/insufficient.
+
+        - strong: 5+ comps within 6 months and avg similarity >= 50
+        - moderate: 3-4 comps
+        - weak: 1-2 comps
+        - insufficient: 0 comps
+        """
+        if comp_count == 0:
+            return "insufficient"
+        if comp_count >= 5 and avg_similarity >= 50:
+            return "strong"
+        if comp_count >= 3:
+            return "moderate"
+        return "weak"
+
+    # ==================================================================
+    # DEEP COMP INTERNALS: County enrichment
+    # ==================================================================
 
     @staticmethod
     async def enrich_comp_from_county(
@@ -327,47 +883,22 @@ class CompService:
             if owns_scraper:
                 await scraper.close()
 
-    # ------------------------------------------------------------------
-    # Step 3: Full pipeline -- find, enrich, return verified comps
-    # ------------------------------------------------------------------
-
     @staticmethod
-    async def build_verified_comps(
+    async def _enrich_candidates(
         db: AsyncSession,
         property_id: str,
-        max_comps: int = 6,
+        candidates: list[CompCandidate],
     ) -> list[EnrichedComp]:
-        """Full pipeline: find candidates, enrich from county, return verified comps.
-
-        This is the main entry point. Takes ~2 minutes for 4-6 comps
-        (each county scrape takes 15-20 seconds).
-
-        Steps:
-        1. find_comp_candidates() -- get raw list from listing sites + county
-        2. For each candidate (up to max_comps):
-           a. enrich_comp_from_county() -- get verified details
-           b. Store as EvidenceItem with source="county_verified_comp"
-        3. Return list of fully enriched comps ready for appraisal engine
-        """
-        candidates = await CompService.find_comp_candidates(db, property_id)
+        """County-enrich a list of candidates. Reused by deep_comp and build_verified_comps."""
         if not candidates:
-            logger.warning("No comp candidates found for property %s", property_id)
             return []
 
-        logger.info(
-            "Found %d comp candidates for property %s, enriching up to %d",
-            len(candidates),
-            property_id,
-            max_comps,
-        )
-
-        # Reuse a single scraper instance for all county lookups
         scraper = LoudounParcelScraper(headless=True)
         enriched_comps: list[EnrichedComp] = []
         now = datetime.now(timezone.utc)
 
         try:
-            for candidate in candidates[:max_comps]:
+            for candidate in candidates:
                 enriched = await CompService.enrich_comp_from_county(
                     db, candidate.address, scraper=scraper
                 )
@@ -379,7 +910,7 @@ class CompService:
                     )
                     continue
 
-                # Detect sqft conflict: listing site sqft vs county above-grade
+                # Detect sqft conflict
                 listing_sqft = candidate.sqft
                 county_sqft = _safe_int(enriched.get("sqft_above_grade"))
                 sqft_conflict = False
@@ -390,7 +921,7 @@ class CompService:
                 # Resolve sale_price: prefer county, fall back to listing
                 sale_price = _safe_float(enriched.get("sale_price"))
                 if sale_price is None:
-                    sale_price = candidate.sale_price
+                    sale_price = candidate.price
                 if sale_price is None:
                     logger.warning(
                         "Skipping comp %s: no sale price from county or listing",
@@ -399,7 +930,7 @@ class CompService:
                     continue
 
                 # Resolve sale_date: prefer county, fall back to listing
-                sale_date = enriched.get("sale_date") or candidate.sale_date or ""
+                sale_date = enriched.get("sale_date") or candidate.date or ""
                 if not sale_date:
                     logger.warning(
                         "Skipping comp %s: no sale date from county or listing",
@@ -456,20 +987,44 @@ class CompService:
                 db.add(evidence)
 
             await db.flush()
-            logger.info(
-                "Enriched %d/%d comps with county data for property %s",
-                len(enriched_comps),
-                len(candidates[:max_comps]),
-                property_id,
-            )
             return enriched_comps
 
         finally:
             await scraper.close()
 
-    # ------------------------------------------------------------------
-    # Step 4: End-to-end -- source comps, enrich, run appraisal
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # LEGACY: build_verified_comps and run_comp_analysis
+    # Keep for backward compatibility — delegate to new methods internally
+    # ==================================================================
+
+    @staticmethod
+    async def build_verified_comps(
+        db: AsyncSession,
+        property_id: str,
+        max_comps: int = 6,
+    ) -> list[EnrichedComp]:
+        """Full pipeline: find candidates, enrich from county, return verified comps.
+
+        Legacy method — now delegates to find_comp_candidates + _enrich_candidates.
+        """
+        candidates = await CompService.find_comp_candidates(db, property_id)
+        if not candidates:
+            logger.warning("No comp candidates found for property %s", property_id)
+            return []
+
+        # Filter to sold only for enrichment
+        sold = [c for c in candidates if c.status == "sold"]
+
+        logger.info(
+            "Found %d comp candidates for property %s, enriching up to %d",
+            len(sold),
+            property_id,
+            max_comps,
+        )
+
+        return await CompService._enrich_candidates(
+            db, property_id, sold[:max_comps]
+        )
 
     @staticmethod
     async def run_comp_analysis(
@@ -480,182 +1035,26 @@ class CompService:
     ) -> dict:
         """End-to-end: source comps, enrich, run appraisal analysis.
 
-        Args:
-            subject_data: dict with list_price, sqft, beds, baths, year_built
-                         for the target property. If None, loads from DB.
-            max_comps: maximum number of comps to enrich (each takes 15-20s).
-
-        Returns dict with:
-        - comps: list of verified comparable sales with county data
-        - appraisal_result: AppraisalResult from the analysis engine
-        - data_quality: dict with comp_count, county_verified_count,
-                        avg_adjustment, confidence
-        - conflicts: list of listing-site vs county discrepancies found
+        Legacy method — internally runs deep_comp and reshapes to old format.
         """
-        # 1. Load subject property data if not provided
-        if subject_data is None:
-            subject_data = await CompService._load_subject_data(db, property_id)
-
-        list_price = subject_data.get("list_price", 0)
-        sqft = subject_data.get("sqft", 0)
-        beds = subject_data.get("beds", 0)
-        baths = subject_data.get("baths", 0.0)
-        year_built = subject_data.get("year_built")
-
-        # 2. Find all candidates and separate by status
-        all_candidates = await CompService.find_comp_candidates(db, property_id)
-        sold_candidates = [c for c in all_candidates if c.status == "sold"]
-        active_candidates = [c for c in all_candidates if c.status == "active"]
-        pending_candidates = [c for c in all_candidates if c.status in ("pending", "contingent")]
-
-        logger.info(
-            "Comp candidates: %d sold, %d active, %d pending",
-            len(sold_candidates), len(active_candidates), len(pending_candidates),
+        deep_result = await CompService.deep_comp(
+            db, property_id, subject_data=subject_data, max_comps=max_comps
         )
 
-        # 3. Build verified comps (county enrichment — only for sold)
-        enriched_comps = await CompService.build_verified_comps(
-            db, property_id, max_comps=max_comps
-        )
-
-        # 3. Convert EnrichedComp -> ComparableSale for the appraisal engine
-        comparable_sales: list[ComparableSale] = []
-        for comp in enriched_comps:
-            # Use sqft_above_grade from county for adjustments, not total sqft
-            comp_sqft = comp.sqft_above_grade or comp.total_sqft or 0
-            comp_baths = (comp.full_baths or 0) + (comp.half_baths or 0) * 0.5
-
-            # Parse sale_date to date object
-            sale_date = _parse_date(comp.sale_date)
-            if sale_date is None:
-                sale_date = date.today()
-
-            # Estimate bedrooms from county data or fall back to listing
-            # County doesn't always have bedroom count, so we estimate
-            # from sqft if needed
-            comp_beds = beds  # default to subject beds if county has no data
-
-            cs = ComparableSale(
-                address=comp.address,
-                sale_price=comp.sale_price,
-                sale_date=sale_date,
-                square_feet=comp_sqft,
-                bedrooms=comp_beds,
-                bathrooms=comp_baths,
-                year_built=comp.year_built,
-                price_per_sqft=round(comp.sale_price / max(comp_sqft, 1), 2),
-            )
-            comparable_sales.append(cs)
-
-        # 4. Run appraisal analysis
-        appraisal_result = run_appraisal_analysis(
-            list_price=list_price,
-            sqft=sqft,
-            beds=beds,
-            baths=baths,
-            year_built=year_built,
-            comps=comparable_sales,
-        )
-
-        # 5. Check for listing-site vs county conflicts
-        conflicts: list[dict] = []
-        for comp in enriched_comps:
-            if comp.sqft_conflict:
-                conflicts.append({
-                    "address": comp.address,
-                    "field": "sqft",
-                    "listing_value": comp.zillow_sqft,
-                    "county_value": comp.county_sqft,
-                    "note": (
-                        f"Listing site reports {comp.zillow_sqft} sqft, "
-                        f"county above-grade SFLA is {comp.county_sqft} sqft "
-                        f"(>{10}% difference). County value used for adjustments."
-                    ),
-                })
-
-        # 6. Build data quality summary
-        county_verified = sum(
-            1 for c in enriched_comps if c.county_sqft is not None
-        )
-        avg_adjustment = 0.0
-        if appraisal_result.comparables:
-            total_adj = sum(
-                abs(sum(c.adjustments.values()))
-                for c in appraisal_result.comparables
-                if c.adjustments
-            )
-            avg_adjustment = total_adj / len(appraisal_result.comparables)
-
-        data_quality = {
-            "comp_count": len(enriched_comps),
-            "county_verified_count": county_verified,
-            "avg_adjustment": round(avg_adjustment, 2),
-            "confidence": appraisal_result.confidence,
-        }
-
-        # 7. Store analysis run for reproducibility
-        run_input = {
-            "property_id": property_id,
-            "subject_data": subject_data,
-            "max_comps": max_comps,
-            "comp_addresses": [c.address for c in enriched_comps],
-        }
-        run = AnalysisRun(
-            property_id=property_id,
-            analysis_type="comp_appraisal",
-            ruleset_version="1.0.0",
-            code_version=_CODE_VERSION,
-            input_snapshot_hash=_input_hash(run_input),
-            output_json={
-                "appraisal": appraisal_result.model_dump(),
-                "data_quality": data_quality,
-                "conflict_count": len(conflicts),
-            },
-            computed_at=datetime.now(timezone.utc),
-        )
-        db.add(run)
-        await db.flush()
-
-        # 8. Build market context from active/pending listings
-        market_context = {
-            "active_count": len(active_candidates),
-            "pending_count": len(pending_candidates),
-            "sold_count": len(sold_candidates),
-        }
-        if active_candidates:
-            active_prices = [c.price for c in active_candidates if c.price]
-            if active_prices:
-                market_context["active_price_range"] = {
-                    "low": min(active_prices),
-                    "high": max(active_prices),
-                    "median": sorted(active_prices)[len(active_prices) // 2],
-                }
-                market_context["asking_vs_active"] = (
-                    "below" if list_price < min(active_prices)
-                    else "above" if list_price > max(active_prices)
-                    else "within"
-                )
-        if pending_candidates:
-            pending_prices = [c.price for c in pending_candidates if c.price]
-            if pending_prices:
-                market_context["pending_price_range"] = {
-                    "low": min(pending_prices),
-                    "high": max(pending_prices),
-                }
-
+        # Reshape to legacy format (without the new fields)
         return {
-            "sold_comps": [c.model_dump() for c in enriched_comps],
-            "active_listings": [c.model_dump() for c in active_candidates],
-            "pending_listings": [c.model_dump() for c in pending_candidates],
-            "appraisal": appraisal_result.model_dump(),
-            "data_quality": data_quality,
-            "conflicts": conflicts,
-            "market_context": market_context,
+            "sold_comps": deep_result["sold_comps"],
+            "active_listings": deep_result["active_listings"],
+            "pending_listings": deep_result["pending_listings"],
+            "appraisal": deep_result["appraisal"],
+            "data_quality": deep_result["data_quality"],
+            "conflicts": deep_result["conflicts"],
+            "market_context": deep_result["market_context"],
         }
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # County data parsers
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     @staticmethod
     def _parse_county_residential(county_data: dict) -> dict:
@@ -709,9 +1108,9 @@ class CompService:
             "buyer": kv.get("Buyer"),
         }
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # Subject property loader
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     @staticmethod
     async def _load_subject_data(
@@ -772,56 +1171,140 @@ class CompService:
 
         return subject
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Assessment context loader (for quick comp)
+    # ==================================================================
+
+    @staticmethod
+    async def _load_assessment_context(
+        db: AsyncSession, property_id: str
+    ) -> dict | None:
+        """Load county assessment context if available (no scraping)."""
+        result = await db.execute(
+            select(SourceRecord).where(
+                SourceRecord.property_id == property_id,
+                SourceRecord.source_name.in_([
+                    "loudoun_county", "loudoun_parcel",
+                ]),
+            ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+
+        payload = record.raw_payload or {}
+        values = payload.get("Values", {})
+        kv = values.get("_key_values", {})
+
+        assessed_total = kv.get("Fair Market Total")
+        if assessed_total is None:
+            return None
+
+        return {
+            "assessed_total": _safe_float(assessed_total),
+            "assessed_land": _safe_float(kv.get("Fair Market Land")),
+            "assessed_building": _safe_float(kv.get("Fair Market Building")),
+            "source": "loudoun_county",
+            "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
+        }
+
+    # ==================================================================
+    # Date spread helper
+    # ==================================================================
+
+    @staticmethod
+    def _compute_date_spread(comps: list[CompCandidate]) -> float:
+        """Compute months between oldest and newest comp sale date."""
+        dates: list[date] = []
+        for c in comps:
+            if c.date:
+                d = _parse_date(c.date)
+                if d:
+                    dates.append(d)
+
+        if len(dates) < 2:
+            return 0.0
+
+        oldest = min(dates)
+        newest = max(dates)
+        delta = newest - oldest
+        return delta.days / 30.0
+
+    # ==================================================================
     # Stored results loader
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     @staticmethod
     async def get_stored_results(
         db: AsyncSession, property_id: str
     ) -> dict | None:
-        """Load the most recent comp analysis run from the database.
+        """Load the most recent comp analysis results from the database.
 
-        Returns the stored output_json from the AnalysisRun, or None
-        if no comp analysis has been run for this property.
+        Returns a dict with quick_comp and/or deep_comp results,
+        or None if no analysis has been run.
         """
-        result = await db.execute(
+        output: dict[str, Any] = {}
+
+        # Load most recent quick_comp
+        quick_result = await db.execute(
             select(AnalysisRun)
             .where(
                 AnalysisRun.property_id == property_id,
-                AnalysisRun.analysis_type == "comp_appraisal",
+                AnalysisRun.analysis_type == "quick_comp",
             )
             .order_by(AnalysisRun.computed_at.desc())
             .limit(1)
         )
-        run = result.scalar_one_or_none()
-        if run is None:
+        quick_run = quick_result.scalar_one_or_none()
+        if quick_run:
+            output["quick_comp"] = quick_run.output_json or {}
+            output["quick_comp"]["computed_at"] = (
+                quick_run.computed_at.isoformat() if quick_run.computed_at else None
+            )
+
+        # Load most recent deep_comp
+        deep_result = await db.execute(
+            select(AnalysisRun)
+            .where(
+                AnalysisRun.property_id == property_id,
+                AnalysisRun.analysis_type.in_(["deep_comp", "comp_appraisal"]),
+            )
+            .order_by(AnalysisRun.computed_at.desc())
+            .limit(1)
+        )
+        deep_run = deep_result.scalar_one_or_none()
+        if deep_run:
+            deep_data = deep_run.output_json or {}
+
+            # Also load enriched comp evidence items
+            evidence_result = await db.execute(
+                select(EvidenceItem)
+                .where(
+                    EvidenceItem.property_id == property_id,
+                    EvidenceItem.field_name.like("comp:%"),
+                    EvidenceItem.confidence == "confirmed",
+                )
+                .order_by(EvidenceItem.observed_at.desc())
+            )
+            comp_evidence = evidence_result.scalars().all()
+
+            comps = []
+            for ev in comp_evidence:
+                try:
+                    comp_data = json.loads(ev.field_value)
+                    comps.append(comp_data)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+            deep_data["comps"] = comps
+            deep_data["computed_at"] = (
+                deep_run.computed_at.isoformat() if deep_run.computed_at else None
+            )
+            output["deep_comp"] = deep_data
+
+        if not output:
             return None
 
-        # The output_json has {appraisal, data_quality, conflict_count}
-        # Also load the enriched comp evidence items
-        evidence_result = await db.execute(
-            select(EvidenceItem)
-            .where(
-                EvidenceItem.property_id == property_id,
-                EvidenceItem.field_name.like("comp:%"),
-                EvidenceItem.confidence == "confirmed",
-            )
-            .order_by(EvidenceItem.observed_at.desc())
-        )
-        comp_evidence = evidence_result.scalars().all()
-
-        comps = []
-        for ev in comp_evidence:
-            try:
-                comp_data = json.loads(ev.field_value)
-                comps.append(comp_data)
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-        output = run.output_json or {}
-        output["comps"] = comps
-        output["computed_at"] = run.computed_at.isoformat() if run.computed_at else None
         return output
 
 

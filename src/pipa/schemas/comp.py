@@ -1,4 +1,9 @@
-"""Pydantic v2 schemas for comparable sales sourcing and enrichment."""
+"""Pydantic v2 schemas for comparable sales sourcing and enrichment.
+
+Two-stage comp system:
+- QuickCompResult: auto-runs on every new listing, no county scraping
+- DeepCompResult: user-triggered, county-verified, adjustment-grade
+"""
 
 from __future__ import annotations
 
@@ -20,6 +25,9 @@ class CompCandidate(BaseModel):
     beds: Optional[int] = None
     baths: Optional[float] = None
     days_on_market: Optional[int] = None  # for active/pending
+    similarity_score: Optional[float] = None  # 0-100, set by filter_comps
+    year_built: Optional[int] = None
+    property_type: Optional[str] = None
 
 
 class EnrichedComp(BaseModel):
@@ -53,8 +61,54 @@ class EnrichedComp(BaseModel):
     sqft_conflict: bool = False  # True if they disagree by >10%
 
 
+# ======================================================================
+# Quick Comp — runs automatically on every new listing, no county scraping
+# ======================================================================
+
+
+class QuickCompResult(BaseModel):
+    """Result from quick comp — rough value band, no county scraping."""
+
+    candidates: list[CompCandidate]  # all discovered candidates
+    filtered_comps: list[CompCandidate]  # filtered to likely matches (5-8)
+    sold_count: int
+    active_count: int
+    pending_count: int
+    rough_value_band: dict  # {low, mid, high} from portal data only
+    quick_confidence: str  # "strong", "moderate", "weak", "insufficient"
+    warnings: list[str]  # e.g., "few comps in area", "old sales only"
+    assessment_context: dict | None = None  # county assessment if available
+    asking_vs_comps: str  # "below", "at", "above" market
+
+
+# ======================================================================
+# Deep Comp — runs only when user clicks "Run Deep Comp"
+# ======================================================================
+
+
+class DeepCompResult(BaseModel):
+    """Result from deep comp — county-verified, adjustment-grade."""
+
+    sold_comps: list[EnrichedComp]  # county-verified sold (3-6 best)
+    active_listings: list[CompCandidate]  # competing
+    pending_listings: list[CompCandidate]  # under contract
+    appraisal: dict  # AppraisalResult
+    adjustments_summary: dict  # per-comp adjustment explanation
+    value_range: dict  # {low, mid, high} from adjusted comps
+    confidence: str  # high, medium, low
+    data_quality: dict
+    conflicts: list[dict]  # Zillow vs county discrepancies
+    market_context: dict
+    unresolved_unknowns: list[str]  # things we couldn't verify
+
+
+# ======================================================================
+# Legacy schemas — kept for backward compatibility
+# ======================================================================
+
+
 class CompAnalysisResult(BaseModel):
-    """Full comp analysis result."""
+    """Full comp analysis result (legacy — use DeepCompResult for new code)."""
 
     sold_comps: list[EnrichedComp]  # county-verified sold properties
     active_listings: list[CompCandidate] = []  # competing active listings

@@ -156,6 +156,20 @@ class ListingIngestService:
             prop.id,
             url,
         )
+
+        # Auto-run quick comp on every new listing.
+        # Wrapped in try/except so comp failure never blocks ingest.
+        try:
+            from pipa.services.comp_service import CompService
+            await CompService.quick_comp(db, prop.id)
+            logger.info("Quick comp completed for property %s", prop.id)
+        except Exception:
+            logger.warning(
+                "Quick comp failed for property %s — ingest succeeded anyway",
+                prop.id,
+                exc_info=True,
+            )
+
         return prop, snapshot
 
     async def ingest_from_address(
