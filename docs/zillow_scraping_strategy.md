@@ -1,8 +1,43 @@
 # Zillow Scraping Strategy
 
+## Architecture
+
+The ZillowScraper (`src/pipa/clients/scrapers/zillow.py`, v2.0.0) uses a 3-layer
+extraction approach. It renders the real page with Playwright (non-headless),
+intercepts the GraphQL API responses the browser naturally makes, and falls back
+to HTML parsing for any missing fields.
+
+**GraphQL cannot be called directly** — it requires PerimeterX cookies and session
+tokens that are only generated during a real browser page load. Calling `/graphql/`
+with httpx would be blocked immediately.
+
 ## Data Extraction Layers (from most reliable to least)
 
-### Layer 1: JSON-LD (embedded in HTML, always present, no CAPTCHA risk)
+### Layer 1 (PRIMARY): GraphQL Interception
+
+The browser makes internal calls to `/graphql/?zpid={zpid}` during page render.
+We intercept these responses — they contain **all** structured property data
+(325k+ chars of clean JSON). This is the most reliable source.
+
+**Endpoint pattern:** `https://www.zillow.com/graphql/?zpid={zpid}&platform=DESKTOP_WEB&...`
+
+**Fields available (confirmed from real scrape of 42580 Deer Isle Dr):**
+- price, bedrooms, bathrooms (full + half), livingArea, yearBuilt
+- hoaFee, zestimate, rentZestimate
+- taxAnnualAmount, taxAssessedValue, taxAssessedYear
+- daysOnZillow, homeStatus, homeType, isNewConstruction
+- lotSize, lotAreaValue (acres), parcelId
+- county, latitude, longitude, streetAddress, city, state, zipcode
+- mlsId, propertyTaxRate, timeOnZillow
+- pageViewCount, favoriteCount
+- brokerageName, agentName, agentPhoneNumber
+- Full priceHistory array (dates, prices, events — e.g. Listed, Price change, Sold)
+- Full taxHistory array (year, taxPaid, assessedValue)
+- Schools with name, rating, distance, level
+- Photo URLs
+- Full description
+
+### Layer 2: JSON-LD (embedded in HTML, always present, no CAPTCHA risk)
 Zillow embeds `<script type="application/ld+json">` with structured data:
 
 ```json

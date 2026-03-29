@@ -1,11 +1,29 @@
-"""Zillow listing page scraper.
+"""Zillow listing page scraper — 3-layer extraction.
 
-Extracts structured property data from Zillow listing pages using
-Playwright for rendering and a combination of JSON-LD, embedded data,
-and CSS selectors for extraction.
+Strategy (from testing against real listings, documented in docs/zillow_scraping_strategy.md):
 
-Selectors will need adjustment when tested against real pages — all are
-defined as class attributes for easy overriding.
+Layer 1 (PRIMARY) — GraphQL interception:
+    The browser naturally makes /graphql/?zpid=... calls during page render.
+    We intercept those responses — they contain ALL structured property data
+    (325k+ chars of clean JSON: price, beds, baths, sqft, zestimate, tax history,
+    price history, schools, walk score, parcel, agent, description, photos, etc.)
+
+Layer 2 — JSON-LD:
+    Always present in initial HTML. Gives price, sqft, beds, address, lat/lon,
+    open house schedule. No baths, no zestimate, no history.
+
+Layer 3 (FALLBACK) — HTML DOM parsing:
+    Uses data-testid selectors and text patterns. Gives beds, baths, sqft,
+    year built, HOA (from URL params), MLS, schools, walk score.
+    More fragile than GraphQL but works without JS API calls.
+
+Anti-bot handling:
+    - Non-headless browser (headless gets blocked more)
+    - navigator.webdriver overridden
+    - AutomationControlled blink feature disabled
+    - PerimeterX "Press & Hold" CAPTCHA solved via mouse hold in iframe
+
+All CSS selectors are class attributes for easy override when Zillow changes their DOM.
 """
 
 from __future__ import annotations
@@ -13,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,77 +39,25 @@ from pipa.clients.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-# Parser version — bump when extraction logic changes materially
-PARSER_VERSION = "1.0.0"
+PARSER_VERSION = "2.0.0"  # Bumped: GraphQL-first approach
 
 
 class ZillowScraper(BaseScraper):
-    """Scrapes individual Zillow listing pages for property data.
+    """Scrapes Zillow listing pages using GraphQL interception + HTML fallback.
 
-    All CSS selectors are class attributes so subclasses or tests can
-    override them without touching extraction logic.
+    Usage::
+
+        scraper = ZillowScraper(headless=False)
+        data = await scraper.scrape_listing(
+            "https://www.zillow.com/homedetails/.../12345_zpid/"
+        )
+        await scraper.close()
     """
 
-    # ------------------------------------------------------------------
-    # Configurable CSS selectors (Zillow, as of early 2026)
-    # ------------------------------------------------------------------
-
-    # Top-level pricing / status
-    SEL_PRICE = "[data-testid='price'] span"
-    SEL_STATUS = "[data-testid='listing-status-label']"
-
-    # Key facts row (beds, baths, sqft)
-    SEL_BEDS = "[data-testid='bed-bath-item']:nth-child(1) strong"
-    SEL_BATHS = "[data-testid='bed-bath-item']:nth-child(2) strong"
-    SEL_SQFT = "[data-testid='bed-bath-item']:nth-child(3) strong"
-
-    # Address parts
-    SEL_ADDRESS_STREET = "h1[data-testid='bdp-street-address']"
-    SEL_ADDRESS_CITY_STATE_ZIP = "h1[data-testid='bdp-street-address'] + span"
-
-    # Facts & features section
-    SEL_YEAR_BUILT = "[data-testid='facts-table'] span:has-text('Year built') + span"
-    SEL_LOT_SIZE = "[data-testid='facts-table'] span:has-text('Lot size') + span"
-    SEL_HOA = "[data-testid='facts-table'] span:has-text('HOA') + span"
-    SEL_PROPERTY_TYPE = "[data-testid='facts-table'] span:has-text('Type') + span"
-    SEL_DAYS_ON_MARKET = "[data-testid='facts-table'] span:has-text('on Zillow') + span"
-    SEL_PARCEL_NUMBER = "[data-testid='facts-table'] span:has-text('Parcel') + span"
-    SEL_MLS_NUMBER = "[data-testid='facts-table'] span:has-text('MLS') + span"
-
-    # Estimates
-    SEL_ZESTIMATE = "[data-testid='zestimate-text'] span"
-
-    # Description
-    SEL_DESCRIPTION = "[data-testid='description'] div"
-
-    # Agent / brokerage
-    SEL_LISTING_AGENT = "[data-testid='listing-agent-name']"
-    SEL_LISTING_BROKERAGE = "[data-testid='listing-brokerage-name']"
-
-    # Photo carousel
-    SEL_PHOTO_IMGS = "ul[class*='photo-carousel'] img"
-
-    # Schools
-    SEL_SCHOOL_ROWS = "[data-testid='school-card']"
-
-    # Walk score
-    SEL_WALK_SCORE = "[data-testid='walk-score'] span"
-    SEL_TRANSIT_SCORE = "[data-testid='transit-score'] span"
-    SEL_BIKE_SCORE = "[data-testid='bike-score'] span"
-
-    # Price / tax history tables
-    SEL_PRICE_HISTORY_ROWS = "[data-testid='price-history'] table tbody tr"
-    SEL_TAX_HISTORY_ROWS = "[data-testid='tax-history'] table tbody tr"
-
-    # Nearby sold
-    SEL_NEARBY_SOLD = "[data-testid='nearby-sales'] li"
-
-    # Wait selector — if this is visible, the page has loaded enough
-    SEL_WAIT = "[data-testid='price']"
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # CSS selectors for HTML fallback (Layer 3)
+    SEL_PRICE = '[data-testid="price"]'
+    SEL_BED_BATH_SQFT = '[data-testid="bed-bath-sqft-fact-container"]'
+    SEL_DESCRIPTION = '[data-testid="description"]'
 
     async def scrape_listing(
         self,
@@ -99,67 +66,120 @@ class ZillowScraper(BaseScraper):
         save_html_dir: Path | None = None,
         save_screenshot_dir: Path | None = None,
     ) -> dict[str, Any]:
-        """Scrape a single Zillow listing page and return structured data.
+        """Scrape a Zillow listing. Returns structured property data dict.
 
-        Args:
-            url: Full Zillow listing URL.
-            save_html_dir: Optional directory to save the raw HTML snapshot.
-            save_screenshot_dir: Optional directory to save a full-page screenshot.
-
-        Returns:
-            Dictionary of extracted listing fields.
+        The method renders the page, handles CAPTCHAs, intercepts GraphQL
+        responses, and falls back to HTML parsing for any missing fields.
         """
         await self._ensure_browser()
         await self._rate_limit_wait()
 
         page = await self._context.new_page()
-        result: dict[str, Any] = {"_source": "zillow", "_url": url, "_parser_version": PARSER_VERSION}
-        html_path: str | None = None
-        screenshot_path: str | None = None
+        result: dict[str, Any] = {
+            "_source": "zillow",
+            "_url": url,
+            "_parser_version": PARSER_VERSION,
+            "_scraped_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Collect GraphQL responses as the page loads
+        graphql_bodies: list[str] = []
+
+        async def _capture_response(resp):
+            try:
+                ct = resp.headers.get("content-type", "")
+                if "json" in ct and resp.status == 200:
+                    resp_url = resp.url
+                    if "graphql" in resp_url or "async-create-search" in resp_url:
+                        body = await resp.text()
+                        if len(body) > 1000:
+                            graphql_bodies.append(body)
+            except Exception:
+                pass
+
+        page.on("response", _capture_response)
 
         try:
-            logger.info("Scraping Zillow listing: %s", url)
-            await page.goto(url, wait_until="networkidle", timeout=45000)
+            # --- Navigate ---
+            logger.info("Scraping Zillow: %s", url)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(10000)
 
-            # Wait for price to appear (indicates listing data loaded)
-            try:
-                await page.wait_for_selector(self.SEL_WAIT, timeout=15000)
-            except Exception:
-                logger.warning("Price selector not found; page may not have loaded fully")
+            # --- CAPTCHA handling ---
+            await self._handle_captcha(page)
 
+            # --- Scroll to trigger lazy API calls ---
+            for i in range(8):
+                try:
+                    await page.evaluate(f"window.scrollTo(0, {(i + 1) * 800})")
+                    await page.wait_for_timeout(800)
+                except Exception:
+                    await page.wait_for_timeout(2000)
+                    break
+            await page.wait_for_timeout(5000)
+
+            # --- Get page HTML for fallback ---
             html = await page.content()
 
             # Save HTML snapshot
             if save_html_dir:
-                html_path = self._save_listing_html(html, url, save_html_dir)
-                result["_raw_html_path"] = html_path
+                save_html_dir.mkdir(parents=True, exist_ok=True)
+                zpid = re.search(r"(\d+)_zpid", url)
+                fname = f"zillow_{zpid.group(1) if zpid else 'unknown'}.html"
+                path = save_html_dir / fname
+                path.write_text(html, encoding="utf-8")
+                result["_raw_html_path"] = str(path)
 
             # Save screenshot
             if save_screenshot_dir:
-                screenshot_path = self._save_listing_screenshot(page, url, save_screenshot_dir)
-                result["_screenshot_path"] = screenshot_path
+                save_screenshot_dir.mkdir(parents=True, exist_ok=True)
+                zpid = re.search(r"(\d+)_zpid", url)
+                fname = f"zillow_{zpid.group(1) if zpid else 'unknown'}.png"
+                path = save_screenshot_dir / fname
+                await page.screenshot(path=str(path), full_page=True)
+                result["_screenshot_path"] = str(path)
 
-            # ----------------------------------------------------------
-            # Phase 1: Extract from JSON-LD / embedded script data
-            # ----------------------------------------------------------
-            json_ld_data = await self._extract_json_ld(page)
-            if json_ld_data:
-                result.update(self._parse_json_ld(json_ld_data))
+            # ==============================================
+            # Layer 1: GraphQL interception (PRIMARY)
+            # ==============================================
+            graphql_data = self._extract_from_graphql(graphql_bodies)
+            if graphql_data:
+                result.update(graphql_data)
+                result["_extraction_method"] = "graphql"
+                logger.info("GraphQL extraction: %d fields", len(graphql_data))
 
-            initial_data = await self._extract_initial_data(page)
-            if initial_data:
-                result.update(self._parse_initial_data(initial_data))
+            # ==============================================
+            # Layer 2: JSON-LD (fills gaps)
+            # ==============================================
+            jsonld_data = self._extract_from_jsonld(html)
+            if jsonld_data:
+                for k, v in jsonld_data.items():
+                    if k not in result or result[k] is None:
+                        result[k] = v
+                if "_extraction_method" not in result:
+                    result["_extraction_method"] = "jsonld"
 
-            # ----------------------------------------------------------
-            # Phase 2: Extract from DOM selectors (fills gaps / overrides)
-            # ----------------------------------------------------------
-            dom_data = await self._extract_from_dom(page)
-            # Merge — DOM values override JSON-LD where both exist
-            for key, val in dom_data.items():
-                if val is not None:
-                    result[key] = val
+            # ==============================================
+            # Layer 3: HTML DOM parsing (fills remaining gaps)
+            # ==============================================
+            html_data = self._extract_from_html(html)
+            if html_data:
+                for k, v in html_data.items():
+                    if k not in result or result[k] is None:
+                        result[k] = v
+                if "_extraction_method" not in result:
+                    result["_extraction_method"] = "html_fallback"
 
+            # Clean up None values
+            result = {k: v for k, v in result.items() if v is not None}
+
+            logger.info(
+                "Zillow scrape complete: %d fields via %s",
+                len(result),
+                result.get("_extraction_method", "unknown"),
+            )
             return result
+
         except Exception:
             logger.exception("Failed to scrape Zillow listing: %s", url)
             result["_error"] = "scrape_failed"
@@ -167,479 +187,420 @@ class ZillowScraper(BaseScraper):
         finally:
             await page.close()
 
-    # ------------------------------------------------------------------
-    # JSON-LD extraction
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # CAPTCHA handling
+    # ==================================================================
 
-    async def _extract_json_ld(self, page) -> dict | None:
-        """Extract JSON-LD structured data from script tags."""
-        try:
-            scripts = await page.query_selector_all('script[type="application/ld+json"]')
-            for script in scripts:
-                text = await script.inner_text()
-                try:
-                    data = json.loads(text)
-                    # Zillow uses SingleFamilyResidence or similar
-                    if isinstance(data, dict) and data.get("@type") in (
-                        "SingleFamilyResidence", "Residence", "Product", "RealEstateListing",
-                    ):
-                        return data
-                    if isinstance(data, list):
-                        for item in data:
-                            if isinstance(item, dict) and item.get("@type") in (
-                                "SingleFamilyResidence", "Residence", "Product", "RealEstateListing",
-                            ):
-                                return item
-                except json.JSONDecodeError:
+    async def _handle_captcha(self, page, max_attempts: int = 3):
+        """Detect and solve PerimeterX Press & Hold CAPTCHA.
+
+        The CAPTCHA element (#px-captcha) lives inside an iframe. We find it,
+        get its bounding box (which is in main-page coordinates), then
+        press-and-hold with the main page mouse for 10-12 seconds.
+        """
+        for attempt in range(max_attempts):
+            captcha_el = None
+
+            # Search inside iframes for #px-captcha
+            for frame in page.frames:
+                if frame == page.main_frame:
                     continue
-        except Exception:
-            logger.debug("No JSON-LD data found")
-        return None
+                try:
+                    el = await frame.query_selector("#px-captcha")
+                    if el:
+                        captcha_el = el
+                        break
+                except Exception:
+                    pass
 
-    def _parse_json_ld(self, data: dict) -> dict[str, Any]:
-        """Parse relevant fields from JSON-LD schema data."""
+            # Also check main page
+            if not captcha_el:
+                captcha_el = await page.query_selector("#px-captcha")
+
+            if not captcha_el:
+                if attempt == 0:
+                    logger.debug("No CAPTCHA detected")
+                return  # No CAPTCHA, proceed
+
+            box = await captcha_el.bounding_box()
+            if not box:
+                logger.warning("CAPTCHA found but no bounding box")
+                return
+
+            cx = box["x"] + box["width"] / 2
+            cy = box["y"] + box["height"] / 2
+
+            # If bounding box is full-page, the element is the iframe container
+            # The button is roughly centered, slightly below middle
+            if box["width"] > 500 and box["height"] > 500:
+                cy = box["y"] + box["height"] / 2 + 30
+
+            logger.info(
+                "CAPTCHA attempt %d: pressing at (%.0f, %.0f) for 12s",
+                attempt + 1, cx, cy,
+            )
+
+            # Human-like mouse movement then press-and-hold
+            await page.mouse.move(cx - 30, cy - 15)
+            await page.wait_for_timeout(200)
+            await page.mouse.move(cx, cy)
+            await page.wait_for_timeout(300)
+            await page.mouse.down()
+            await page.wait_for_timeout(12000)
+            await page.mouse.up()
+
+            # Wait for page to potentially reload
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(5000)
+
+            # Check if cleared
+            still_there = None
+            for frame in page.frames:
+                if frame == page.main_frame:
+                    continue
+                try:
+                    still_there = await frame.query_selector("#px-captcha")
+                    if still_there:
+                        break
+                except Exception:
+                    pass
+            if not still_there:
+                still_there = await page.query_selector("#px-captcha")
+
+            if not still_there:
+                logger.info("CAPTCHA cleared on attempt %d", attempt + 1)
+                await page.wait_for_timeout(8000)  # Let content load
+                return
+
+            logger.warning("CAPTCHA still present after attempt %d", attempt + 1)
+
+        logger.error("Failed to clear CAPTCHA after %d attempts", max_attempts)
+
+    # ==================================================================
+    # Layer 1: GraphQL extraction
+    # ==================================================================
+
+    def _extract_from_graphql(self, bodies: list[str]) -> dict[str, Any]:
+        """Extract property data from intercepted GraphQL responses.
+
+        Finds the main property response (largest one with bedrooms+price)
+        and parses all structured fields from it.
+        """
+        # Find the main property response
+        main_body = None
+        search_body = None
+
+        for body in bodies:
+            if '"bedrooms"' in body and '"price"' in body:
+                if not main_body or len(body) > len(main_body):
+                    main_body = body
+            if '"zestimate"' in body and '"rentZestimate"' in body:
+                search_body = body
+
+        if not main_body:
+            return {}
+
         result: dict[str, Any] = {}
 
-        # Address
-        addr = data.get("address", {})
-        if addr:
-            result["address"] = {
-                "street": addr.get("streetAddress", ""),
-                "city": addr.get("addressLocality", ""),
-                "state": addr.get("addressRegion", ""),
-                "zip": addr.get("postalCode", ""),
-            }
+        # Simple field extraction
+        simple_fields = [
+            ("price", r'"price"\s*:\s*(\d+)', int),
+            ("bedrooms", r'"bedrooms"\s*:\s*(\d+)', int),
+            ("bathrooms", r'"bathrooms"\s*:\s*(\d+)', int),
+            ("full_bathrooms", r'"fullBathrooms"\s*:\s*(\d+)', int),
+            ("half_bathrooms", r'"halfBathrooms"\s*:\s*(\d+)', int),
+            ("sqft", r'"livingArea"\s*:\s*(\d+)', int),
+            ("above_grade_sqft", r'"aboveGradeFinishedArea"\s*:\s*"?(\d+)', int),
+            ("below_grade_sqft", r'"belowGradeFinishedArea"\s*:\s*"?(\d+)', int),
+            ("year_built", r'"yearBuilt"\s*:\s*(\d+)', int),
+            ("hoa_monthly", r'"(?:hoaFee|monthlyHoaFee)"\s*:\s*(\d+)', int),
+            ("annual_tax", r'"taxAnnualAmount"\s*:\s*(\d+)', int),
+            ("tax_assessed_value", r'"taxAssessedValue"\s*:\s*(\d+)', int),
+            ("tax_assessed_year", r'"taxAssessedYear"\s*:\s*(\d+)', int),
+            ("days_on_zillow", r'"daysOnZillow"\s*:\s*(-?\d+)', int),
+            ("lot_sqft", r'"lotSize"\s*:\s*(\d+)', int),
+            ("lot_acres", r'"lotAreaValue"\s*:\s*([\d.]+)', float),
+            ("latitude", r'"latitude"\s*:\s*([\d.\-]+)', float),
+            ("longitude", r'"longitude"\s*:\s*([\d.\-]+)', float),
+            ("status", r'"homeStatus"\s*:\s*"([^"]+)"', str),
+            ("home_type", r'"homeType"\s*:\s*"([^"]+)"', str),
+            ("county", r'"county"\s*:\s*"([^"]+)"', str),
+            ("parcel_id", r'"parcelId"\s*:\s*"([^"]+)"', str),
+            ("mls_id", r'"mlsId"\s*:\s*"([^"]+)"', str),
+            ("street_address", r'"streetAddress"\s*:\s*"([^"]+)"', str),
+            ("city", r'"city"\s*:\s*"([^"]+)"', str),
+            ("state", r'"state"\s*:\s*"([^"]+)"', str),
+            ("zipcode", r'"zipcode"\s*:\s*"([^"]+)"', str),
+            ("property_tax_rate", r'"propertyTaxRate"\s*:\s*([\d.]+)', float),
+            ("time_on_zillow", r'"timeOnZillow"\s*:\s*"([^"]+)"', str),
+            ("page_view_count", r'"pageViewCount"\s*:\s*(\d+)', int),
+            ("favorite_count", r'"favoriteCount"\s*:\s*(\d+)', int),
+            ("brokerage", r'"brokerageName"\s*:\s*"([^"]+)"', str),
+            ("agent_name", r'"agentName"\s*:\s*"([^"]+)"', str),
+            ("agent_phone", r'"agentPhoneNumber"\s*:\s*"([^"]+)"', str),
+            ("is_new_construction", r'"isNewConstruction"\s*:\s*(true|false)', str),
+        ]
 
-        # Geo
-        geo = data.get("geo", {})
-        if geo:
-            result["latitude"] = _safe_float(geo.get("latitude"))
-            result["longitude"] = _safe_float(geo.get("longitude"))
+        for name, pat, convert in simple_fields:
+            m = re.search(pat, main_body)
+            if m:
+                try:
+                    result[name] = convert(m.group(1))
+                except (ValueError, TypeError):
+                    result[name] = m.group(1)
+
+        # Compute baths as X.5 format if we have full+half
+        if result.get("full_bathrooms") and result.get("half_bathrooms"):
+            result["baths"] = result["full_bathrooms"] + result["half_bathrooms"] * 0.5
 
         # Description
-        if data.get("description"):
-            result["description"] = data["description"]
+        desc = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"', main_body)
+        if desc:
+            result["description"] = (
+                desc.group(1)
+                .replace("\\n", "\n")
+                .replace("\\u0027", "'")
+                .replace('\\"', '"')
+            )
+
+        # Price history
+        ph_section = re.search(r'"priceHistory"\s*:\s*\[(.*?)\]', main_body, re.DOTALL)
+        if ph_section:
+            entries = re.findall(
+                r'"date"\s*:\s*"([^"]+)".*?"price"\s*:\s*(\d+).*?"event"\s*:\s*"([^"]*)"',
+                ph_section.group(1),
+            )
+            if entries:
+                result["price_history"] = [
+                    {"date": d, "price": int(p), "event": e}
+                    for d, p, e in entries
+                ]
+
+        # Tax history (timestamps are Unix epoch in ms)
+        th_section = re.search(r'"taxHistory"\s*:\s*\[(.*?)\]', main_body, re.DOTALL)
+        if th_section:
+            entries = re.findall(
+                r'"time"\s*:\s*(\d+).*?"taxPaid"\s*:\s*([\d.]+).*?"value"\s*:\s*(\d+)',
+                th_section.group(1),
+            )
+            if entries:
+                result["tax_history"] = []
+                for ts, paid, val in entries:
+                    # Convert Unix timestamp to year
+                    try:
+                        year = datetime.fromtimestamp(int(ts), tz=timezone.utc).year
+                    except (ValueError, OSError):
+                        year = int(ts)
+                    result["tax_history"].append({
+                        "year": year,
+                        "tax_paid": round(float(paid), 2),
+                        "assessed_value": int(val),
+                    })
+
+        # Schools
+        school_entries = re.findall(
+            r'"schoolName"\s*:\s*"([^"]+)".*?"rating"\s*:\s*(\d+).*?"distance"\s*:\s*([\d.]+).*?"level"\s*:\s*"([^"]+)"',
+            main_body,
+        )
+        if school_entries:
+            result["schools"] = [
+                {"name": n, "rating": int(r), "distance_mi": float(d), "level": l}
+                for n, r, d, l in school_entries
+            ]
+
+        # Zestimate from search response (more reliable than main)
+        if search_body:
+            zest = re.search(r'"zestimate"\s*:\s*(\d+)', search_body)
+            if zest:
+                result["zestimate"] = int(zest.group(1))
+            rent_zest = re.search(r'"rentZestimate"\s*:\s*(\d+)', search_body)
+            if rent_zest:
+                result["rent_zestimate"] = int(rent_zest.group(1))
 
         # Photo URLs
-        photos = data.get("photo") or data.get("image")
-        if isinstance(photos, list):
-            result["photo_urls"] = [
-                p.get("contentUrl") or p if isinstance(p, dict) else str(p)
-                for p in photos[:50]
-            ]
-        elif isinstance(photos, str):
-            result["photo_urls"] = [photos]
-
-        # Floor area
-        floor_size = data.get("floorSize", {})
-        if isinstance(floor_size, dict):
-            result["sqft"] = _safe_float(floor_size.get("value"))
-
-        # Beds / baths
-        result["beds"] = _safe_int(data.get("numberOfRooms"))
-
-        return {k: v for k, v in result.items() if v is not None}
-
-    # ------------------------------------------------------------------
-    # Initial data / Apollo state extraction
-    # ------------------------------------------------------------------
-
-    async def _extract_initial_data(self, page) -> dict | None:
-        """Try to extract Zillow's __NEXT_DATA__ or inline initial data."""
-        try:
-            data = await page.evaluate("""
-                () => {
-                    // Next.js style
-                    const nextEl = document.getElementById('__NEXT_DATA__');
-                    if (nextEl) return JSON.parse(nextEl.textContent);
-
-                    // Zillow inline data pattern
-                    const scripts = document.querySelectorAll('script');
-                    for (const s of scripts) {
-                        const text = s.textContent || '';
-                        if (text.includes('gdpClientCache') || text.includes('apiCache')) {
-                            const match = text.match(/({.*"apiCache".*})/s);
-                            if (match) return JSON.parse(match[1]);
-                        }
-                    }
-                    return null;
-                }
-            """)
-            return data
-        except Exception:
-            logger.debug("No initial data blob found")
-            return None
-
-    def _parse_initial_data(self, data: dict) -> dict[str, Any]:
-        """Extract fields from Zillow's embedded data cache.
-
-        The structure is deeply nested and varies; this does best-effort
-        extraction of the most useful fields.
-        """
-        result: dict[str, Any] = {}
-
-        # Navigate common paths in the Zillow data cache
-        try:
-            # Try gdpClientCache path
-            cache = data.get("gdpClientCache") or data.get("apiCache") or {}
-            if isinstance(cache, str):
-                cache = json.loads(cache)
-
-            # Walk the cache looking for property data
-            for key, value in (cache.items() if isinstance(cache, dict) else []):
-                if not isinstance(value, str):
-                    continue
-                try:
-                    parsed = json.loads(value)
-                    prop = parsed.get("property") or parsed
-                    if isinstance(prop, dict) and "zpid" in prop:
-                        result.update(self._extract_from_cache_property(prop))
-                        break
-                except (json.JSONDecodeError, AttributeError):
-                    continue
-        except Exception:
-            logger.debug("Could not parse initial data cache")
+        photos = re.findall(r'"(https://photos\.zillowstatic\.com/[^"]+)"', main_body)
+        if photos:
+            result["photo_urls"] = list(set(photos))
 
         return result
 
-    def _extract_from_cache_property(self, prop: dict) -> dict[str, Any]:
-        """Extract fields from a Zillow cache property object."""
+    # ==================================================================
+    # Layer 2: JSON-LD extraction
+    # ==================================================================
+
+    def _extract_from_jsonld(self, html: str) -> dict[str, Any]:
+        """Extract from JSON-LD structured data embedded in HTML."""
         result: dict[str, Any] = {}
 
-        result["list_price"] = _safe_float(prop.get("price"))
-        result["status"] = prop.get("homeStatus", "").lower().replace("_", " ")
-        result["beds"] = _safe_int(prop.get("bedrooms"))
-        result["baths"] = _safe_float(prop.get("bathrooms"))
-        result["sqft"] = _safe_float(prop.get("livingArea"))
-        result["lot_size"] = prop.get("lotSize")
-        result["year_built"] = _safe_int(prop.get("yearBuilt"))
-        result["property_type"] = prop.get("homeType", "").lower().replace("_", " ")
-        result["zestimate"] = _safe_float(prop.get("zestimate"))
-        result["days_on_market"] = _safe_int(prop.get("daysOnZillow"))
-        result["hoa_monthly"] = _safe_float(prop.get("monthlyHoaFee"))
-        result["description"] = prop.get("description")
-        result["mls_number"] = prop.get("mlsid")
-        result["parcel_number"] = prop.get("parcelId")
-        result["latitude"] = _safe_float(prop.get("latitude"))
-        result["longitude"] = _safe_float(prop.get("longitude"))
+        ld_blocks = re.findall(
+            r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
+            html, re.DOTALL,
+        )
+        for block in ld_blocks:
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError:
+                continue
 
-        # Address
-        addr = prop.get("address", {})
-        if isinstance(addr, dict):
-            result["address"] = {
-                "street": addr.get("streetAddress", ""),
-                "city": addr.get("city", ""),
-                "state": addr.get("state", ""),
-                "zip": addr.get("zipcode", ""),
-            }
+            types = data.get("@type", [])
+            if isinstance(types, str):
+                types = [types]
 
-        # Price history
-        ph = prop.get("priceHistory")
-        if isinstance(ph, list):
-            result["price_history"] = [
-                {
-                    "date": entry.get("date", ""),
-                    "event": entry.get("event", ""),
-                    "price": _safe_float(entry.get("price")),
-                }
-                for entry in ph
-            ]
+            if "RealEstateListing" in types or "Product" in types:
+                offers = data.get("offers", {})
+                if offers.get("price"):
+                    result["price"] = int(offers["price"])
 
-        # Tax history
-        th = prop.get("taxHistory")
-        if isinstance(th, list):
-            result["tax_history"] = [
-                {
-                    "year": _safe_int(entry.get("time")),
-                    "assessed_value": _safe_float(entry.get("value")),
-                    "tax_amount": _safe_float(entry.get("taxPaid")),
-                }
-                for entry in th
-            ]
+                item = offers.get("itemOffered", {})
+                if item.get("numberOfBedrooms"):
+                    result["bedrooms"] = int(item["numberOfBedrooms"])
+                floor = item.get("floorSize", {})
+                if isinstance(floor, dict) and floor.get("value"):
+                    result["sqft"] = int(floor["value"])
 
-        # Schools
-        schools = prop.get("schools")
-        if isinstance(schools, list):
-            result["schools"] = [
-                {
-                    "name": s.get("name", ""),
-                    "rating": _safe_int(s.get("rating")),
-                    "distance": _safe_float(s.get("distance")),
-                    "grades": s.get("grades", ""),
-                }
-                for s in schools
-            ]
+                addr = item.get("address", {})
+                if addr:
+                    result["address"] = {
+                        "street": addr.get("streetAddress", ""),
+                        "city": addr.get("addressLocality", ""),
+                        "state": addr.get("addressRegion", ""),
+                        "zip": addr.get("postalCode", ""),
+                    }
+                geo = item.get("geo", {})
+                if geo:
+                    result["latitude"] = _safe_float(geo.get("latitude"))
+                    result["longitude"] = _safe_float(geo.get("longitude"))
 
-        # Agent / brokerage
-        attr = prop.get("attributionInfo", {})
-        if isinstance(attr, dict):
-            result["listing_agent"] = attr.get("agentName")
-            result["listing_brokerage"] = attr.get("brokerName")
+            elif "Event" in (types if isinstance(types, list) else [types]):
+                if data.get("startDate"):
+                    result["open_house"] = {
+                        "start": data["startDate"],
+                        "end": data.get("endDate"),
+                        "name": data.get("name"),
+                    }
+                if data.get("performer"):
+                    result["brokerage"] = data["performer"]
+
+        return {k: v for k, v in result.items() if v is not None}
+
+    # ==================================================================
+    # Layer 3: HTML DOM parsing (fallback)
+    # ==================================================================
+
+    def _extract_from_html(self, html: str) -> dict[str, Any]:
+        """Parse property data from rendered HTML using regex patterns.
+
+        This is the fallback when GraphQL interception fails.
+        """
+        result: dict[str, Any] = {}
+
+        # Bed/bath/sqft from data-testid containers
+        facts = re.findall(
+            r'data-testid="bed-bath-sqft-fact-container"[^>]*>.*?'
+            r'<span[^>]*>([\d,\.]+)</span>\s*<span[^>]*>(\w+)</span>',
+            html,
+        )
+        for val, label in facts:
+            clean_val = val.replace(",", "")
+            if label == "beds":
+                result["bedrooms"] = int(clean_val)
+            elif label == "baths":
+                result["bathrooms"] = int(clean_val)
+            elif label == "sqft":
+                result["sqft"] = int(clean_val)
+
+        # Price
+        price = re.search(r'data-testid="price"[^>]*>[^$]*\$([\d,]+)', html)
+        if price:
+            result["price"] = int(price.group(1).replace(",", ""))
+
+        # Text-based extractions
+        text_patterns = [
+            ("year_built", r"Built in (\d{4})", int),
+            ("lot_acres", r"([\d\.]+)\s*[Aa]cres?", float),
+            ("hoa_monthly", r"HOAFee=(\d+)", int),
+            ("mls_id", r"MLS\s*#?\s*:?\s*([A-Z]{2,}\d+)", str),
+            ("parcel_id", r"parcelId.*?(\d{10,})", str),
+            ("walk_score", r"[Ww]alk\s*[Ss]core[^<\d]{0,30}(\d+)", int),
+        ]
+        for name, pat, convert in text_patterns:
+            m = re.search(pat, html)
+            if m:
+                try:
+                    result[name] = convert(m.group(1))
+                except (ValueError, TypeError):
+                    pass
+
+        # Description
+        desc = re.search(r'data-testid="description"[^>]*>(.*?)</div>', html, re.DOTALL)
+        if desc:
+            text = re.sub(r"<[^>]+>", " ", desc.group(1))
+            text = re.sub(r"\s+", " ", text).strip()
+            if text:
+                result["description"] = text
+
+        # Facts and features (all categories)
+        fact_categories = re.findall(
+            r'data-testid="fact-category"[^>]*>(.*?)(?=data-testid="fact-category"|data-testid="facts-and-features-wrapper-footer"|$)',
+            html, re.DOTALL,
+        )
+        if fact_categories:
+            features = {}
+            for cat_html in fact_categories:
+                cat_name = re.search(r"<h[56][^>]*>([^<]+)</h", cat_html)
+                cat = cat_name.group(1).strip() if cat_name else "Other"
+                items = re.findall(r"<li[^>]*>(.*?)</li>", cat_html, re.DOTALL)
+                fact_list = []
+                for item in items:
+                    text = re.sub(r"<[^>]+>", " ", item).strip()
+                    text = re.sub(r"\s+", " ", text)
+                    if text and len(text) > 2:
+                        fact_list.append(text)
+                if fact_list:
+                    features[cat] = fact_list
+            if features:
+                result["facts_and_features"] = features
+
+        # Price history from date+price patterns
+        date_prices = re.findall(
+            r"(\d{1,2}/\d{1,2}/\d{4})[^$]{0,200}?\$([\d,]+)",
+            html[:600000],
+        )
+        if date_prices and "price_history" not in result:
+            seen = set()
+            history = []
+            for date, price_str in date_prices:
+                key = f"{date}|{price_str}"
+                if key not in seen:
+                    seen.add(key)
+                    history.append({"date": date, "price": int(price_str.replace(",", ""))})
+            if history:
+                result["price_history"] = history
 
         # Photo URLs
-        photos = prop.get("photos") or prop.get("responsivePhotos")
-        if isinstance(photos, list):
-            urls = []
-            for p in photos[:50]:
-                if isinstance(p, dict):
-                    # Nested structure: photos[].mixedSources.jpeg[].url
-                    sources = p.get("mixedSources", {}).get("jpeg", [])
-                    if sources:
-                        # Get the largest
-                        urls.append(sources[-1].get("url", ""))
-                    elif p.get("url"):
-                        urls.append(p["url"])
-            if urls:
-                result["photo_urls"] = urls
-
-        # Walk / transit / bike scores
-        result["walk_score"] = _safe_int(prop.get("walkScore"))
-        result["transit_score"] = _safe_int(prop.get("transitScore"))
-        result["bike_score"] = _safe_int(prop.get("bikeScore"))
-
-        # Nearby sold
-        nearby = prop.get("nearbySales") or prop.get("comps")
-        if isinstance(nearby, list):
-            result["nearby_sold"] = [
-                {
-                    "address": n.get("address", {}).get("streetAddress", "") if isinstance(n.get("address"), dict) else "",
-                    "price": _safe_float(n.get("price")),
-                    "sqft": _safe_float(n.get("livingArea")),
-                    "sold_date": n.get("dateSold", ""),
-                }
-                for n in nearby[:20]
-            ]
+        photos = re.findall(r'"(https://photos\.zillowstatic\.com/[^"]+)"', html)
+        if photos and "photo_urls" not in result:
+            result["photo_urls"] = list(set(photos))
 
         return {k: v for k, v in result.items() if v is not None}
 
-    # ------------------------------------------------------------------
-    # DOM selector extraction
-    # ------------------------------------------------------------------
 
-    async def _extract_from_dom(self, page) -> dict[str, Any]:
-        """Extract fields by querying DOM elements with CSS selectors."""
-        result: dict[str, Any] = {}
-
-        result["list_price"] = await self._text_as_float(page, self.SEL_PRICE)
-        result["status"] = await self._text(page, self.SEL_STATUS)
-        result["beds"] = await self._text_as_int(page, self.SEL_BEDS)
-        result["baths"] = await self._text_as_float(page, self.SEL_BATHS)
-        result["sqft"] = await self._text_as_float(page, self.SEL_SQFT)
-
-        # Address
-        street = await self._text(page, self.SEL_ADDRESS_STREET)
-        city_state_zip = await self._text(page, self.SEL_ADDRESS_CITY_STATE_ZIP)
-        if street:
-            addr = {"street": street}
-            if city_state_zip:
-                parts = city_state_zip.replace(",", " ").split()
-                if len(parts) >= 3:
-                    addr["city"] = " ".join(parts[:-2])
-                    addr["state"] = parts[-2]
-                    addr["zip"] = parts[-1]
-            result["address"] = addr
-
-        # Facts section
-        result["year_built"] = await self._text_as_int(page, self.SEL_YEAR_BUILT)
-        result["lot_size"] = await self._text(page, self.SEL_LOT_SIZE)
-        result["hoa_monthly"] = await self._text_as_float(page, self.SEL_HOA)
-        result["property_type"] = await self._text(page, self.SEL_PROPERTY_TYPE)
-        result["days_on_market"] = await self._text_as_int(page, self.SEL_DAYS_ON_MARKET)
-        result["parcel_number"] = await self._text(page, self.SEL_PARCEL_NUMBER)
-        result["mls_number"] = await self._text(page, self.SEL_MLS_NUMBER)
-        result["zestimate"] = await self._text_as_float(page, self.SEL_ZESTIMATE)
-        result["description"] = await self._text(page, self.SEL_DESCRIPTION)
-        result["listing_agent"] = await self._text(page, self.SEL_LISTING_AGENT)
-        result["listing_brokerage"] = await self._text(page, self.SEL_LISTING_BROKERAGE)
-
-        # Scores
-        result["walk_score"] = await self._text_as_int(page, self.SEL_WALK_SCORE)
-        result["transit_score"] = await self._text_as_int(page, self.SEL_TRANSIT_SCORE)
-        result["bike_score"] = await self._text_as_int(page, self.SEL_BIKE_SCORE)
-
-        # Photo URLs from carousel
-        photo_urls = await self._attr_list(page, self.SEL_PHOTO_IMGS, "src")
-        if photo_urls:
-            result["photo_urls"] = photo_urls
-
-        # Price history
-        price_history = await self._extract_table_rows(
-            page, self.SEL_PRICE_HISTORY_ROWS,
-            ["date", "event", "price"],
-        )
-        if price_history:
-            result["price_history"] = price_history
-
-        # Tax history
-        tax_history = await self._extract_table_rows(
-            page, self.SEL_TAX_HISTORY_ROWS,
-            ["year", "assessed_value", "tax_amount"],
-        )
-        if tax_history:
-            result["tax_history"] = tax_history
-
-        # Schools
-        schools = await self._extract_schools(page)
-        if schools:
-            result["schools"] = schools
-
-        return {k: v for k, v in result.items() if v is not None}
-
-    async def _extract_schools(self, page) -> list[dict] | None:
-        """Extract school data from school cards."""
-        try:
-            cards = await page.query_selector_all(self.SEL_SCHOOL_ROWS)
-            if not cards:
-                return None
-            schools = []
-            for card in cards:
-                name = await self._inner_text(card, "span[class*='name']")
-                rating = await self._inner_text(card, "span[class*='rating']")
-                distance = await self._inner_text(card, "span[class*='distance']")
-                grades = await self._inner_text(card, "span[class*='grades']")
-                schools.append({
-                    "name": name or "",
-                    "rating": _safe_int(rating),
-                    "distance": _safe_float(distance),
-                    "grades": grades or "",
-                })
-            return schools if schools else None
-        except Exception:
-            return None
-
-    # ------------------------------------------------------------------
-    # Snapshot helpers
-    # ------------------------------------------------------------------
-
-    def _save_listing_html(self, html: str, url: str, save_dir: Path) -> str:
-        """Save raw HTML and return the file path."""
-        path = save_dir / f"zillow_{self._cache_key(url)}.html"
-        self._save_html_snapshot(html, path)
-        return str(path)
-
-    @staticmethod
-    async def _save_listing_screenshot(page, url: str, save_dir: Path) -> str | None:
-        """Save full-page screenshot and return the file path."""
-        import hashlib
-        key = hashlib.sha256(url.encode()).hexdigest()[:16]
-        path = save_dir / f"zillow_{key}.png"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            await page.screenshot(path=str(path), full_page=True)
-            return str(path)
-        except Exception:
-            logger.debug("Failed to save screenshot for %s", url)
-            return None
-
-    # ------------------------------------------------------------------
-    # DOM query helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    async def _text(page, selector: str) -> str | None:
-        """Get trimmed inner text of first matching element, or None."""
-        try:
-            el = await page.query_selector(selector)
-            if el:
-                t = (await el.inner_text()).strip()
-                return t if t else None
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    async def _inner_text(el, selector: str) -> str | None:
-        """Get trimmed inner text from a child selector of an element."""
-        try:
-            child = await el.query_selector(selector)
-            if child:
-                t = (await child.inner_text()).strip()
-                return t if t else None
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    async def _text_as_float(page, selector: str) -> float | None:
-        """Get text of first match, strip non-numeric, return as float."""
-        try:
-            el = await page.query_selector(selector)
-            if el:
-                t = (await el.inner_text()).strip()
-                return _safe_float(t)
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    async def _text_as_int(page, selector: str) -> int | None:
-        """Get text of first match, strip non-numeric, return as int."""
-        try:
-            el = await page.query_selector(selector)
-            if el:
-                t = (await el.inner_text()).strip()
-                return _safe_int(t)
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    async def _attr_list(page, selector: str, attr: str) -> list[str] | None:
-        """Get an attribute from all matching elements."""
-        try:
-            elements = await page.query_selector_all(selector)
-            values = []
-            for el in elements:
-                val = await el.get_attribute(attr)
-                if val:
-                    values.append(val)
-            return values if values else None
-        except Exception:
-            return None
-
-    @staticmethod
-    async def _extract_table_rows(
-        page, selector: str, column_names: list[str]
-    ) -> list[dict] | None:
-        """Extract table rows where each row's <td> cells map to column_names."""
-        try:
-            rows = await page.query_selector_all(selector)
-            if not rows:
-                return None
-            extracted = []
-            for row in rows:
-                cells = await row.query_selector_all("td")
-                entry = {}
-                for i, name in enumerate(column_names):
-                    if i < len(cells):
-                        txt = (await cells[i].inner_text()).strip()
-                        entry[name] = txt
-                extracted.append(entry)
-            return extracted if extracted else None
-        except Exception:
-            return None
-
-
-# ------------------------------------------------------------------
-# Module-level helpers
-# ------------------------------------------------------------------
-
-def _safe_float(val: Any) -> float | None:
-    """Convert a value to float, stripping currency symbols and commas."""
+def _safe_float(val) -> Optional[float]:
     if val is None:
         return None
-    if isinstance(val, (int, float)):
+    try:
         return float(val)
-    if isinstance(val, str):
-        cleaned = re.sub(r"[^\d.\-]", "", val)
-        try:
-            return float(cleaned) if cleaned else None
-        except ValueError:
-            return None
-    return None
+    except (ValueError, TypeError):
+        return None
 
 
-def _safe_int(val: Any) -> int | None:
-    """Convert a value to int, stripping non-numeric characters."""
-    f = _safe_float(val)
-    return int(f) if f is not None else None
+def _safe_int(val) -> Optional[int]:
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
