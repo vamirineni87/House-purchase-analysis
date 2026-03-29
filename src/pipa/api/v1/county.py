@@ -28,6 +28,29 @@ async def _verify_property(db: AsyncSession, property_id: str) -> None:
         raise HTTPException(status_code=404, detail="Property not found")
 
 
+@router.get("/properties/{property_id}/county")
+async def get_county_data(property_id: str, db: AsyncSession = Depends(get_db)):
+    """Get all county data (assessments + permits + deeds) for a property."""
+    await _verify_property(db, property_id)
+    assessments = await CountyService.get_assessments(db, property_id)
+    permits = await CountyService.get_permits(db, property_id)
+    deeds = await CountyService.get_deeds(db, property_id)
+    return {
+        "assessments": [
+            {c.name: getattr(a, c.name) for c in a.__table__.columns}
+            for a in assessments
+        ] if assessments else [],
+        "permits": [
+            {c.name: getattr(p, c.name) for c in p.__table__.columns}
+            for p in permits
+        ] if permits else [],
+        "deeds": [
+            {c.name: getattr(d, c.name) for c in d.__table__.columns}
+            for d in deeds
+        ] if deeds else [],
+    }
+
+
 @router.post(
     "/properties/{property_id}/county/refresh",
     response_model=CountyRefreshResult,

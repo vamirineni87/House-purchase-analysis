@@ -650,9 +650,9 @@ export default function PropertyDetailPage() {
           />
         )}
         {activeTab === "Listing History" && (
-          <ListingHistoryTab propertyId={propertyId} />
+          <ListingHistoryTab propertyId={propertyId} listingData={ld} />
         )}
-        {activeTab === "Schools" && <SchoolsTab propertyId={propertyId} />}
+        {activeTab === "Schools" && <SchoolsTab propertyId={propertyId} listingData={ld} />}
         {activeTab === "AI Analysis" && (
           <AIAnalysisTab packet={packet} propertyId={propertyId} />
         )}
@@ -1498,30 +1498,11 @@ function CountyTab({
 // Tab 7: Listing History
 // =====================================================================
 
-function ListingHistoryTab({ propertyId }: { propertyId: string }) {
-  // Listing history would come from parsed listing data
-  // For now we show what the pipeline extracted
-  const [runs, setRuns] = useState<PipelineRunDetail[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api
-      .getPipelineRuns(propertyId, 5)
-      .then(setRuns)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [propertyId]);
-
-  if (loading) {
-    return <div className="text-sm text-gray-500">Loading...</div>;
-  }
-
-  // Try to extract listing history from pipeline run summaries
-  const latestRun = runs[0];
-  const parsed = (latestRun?.summary_json?.parsed_fields as Record<string, unknown>) || {};
-  const priceHistory = (parsed.price_history as Array<Record<string, unknown>>) || [];
-  const dom = parsed.days_on_market as number | undefined;
-  const cdom = parsed.cumulative_dom as number | undefined;
+function ListingHistoryTab({ propertyId, listingData }: { propertyId: string; listingData: Record<string, unknown> }) {
+  const ld = listingData || {};
+  const priceHistory = (ld.price_history as Array<Record<string, unknown>>) || [];
+  const dom = (ld.days_on_zillow || ld.dom) as number | undefined;
+  const cdom = (ld.cdom) as number | undefined;
 
   return (
     <div className="space-y-6">
@@ -1531,16 +1512,16 @@ function ListingHistoryTab({ propertyId }: { propertyId: string }) {
         <MetricCard
           label="Original List"
           value={
-            parsed.original_list_price
-              ? formatCurrency(Number(parsed.original_list_price))
+            ld.original_ask
+              ? formatCurrency(Number(ld.original_ask))
               : "--"
           }
         />
         <MetricCard
-          label="Current List"
+          label="Total Reduction"
           value={
-            parsed.list_price
-              ? formatCurrency(Number(parsed.list_price))
+            ld.total_reduction
+              ? formatCurrency(Number(ld.total_reduction))
               : "--"
           }
         />
@@ -1610,44 +1591,28 @@ function ListingHistoryTab({ propertyId }: { propertyId: string }) {
 // Tab 8: Schools
 // =====================================================================
 
-function SchoolsTab({ propertyId }: { propertyId: string }) {
-  const [schools, setSchools] = useState<SchoolInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+function SchoolsTab({ propertyId, listingData }: { propertyId: string; listingData: Record<string, unknown> }) {
+  const ld = listingData || {};
 
-  useEffect(() => {
-    // Schools come from pipeline run summary
-    api
-      .getPipelineRuns(propertyId, 5)
-      .then((runs) => {
-        for (const run of runs) {
-          const schoolData =
-            (run.summary_json?.schools as SchoolInfo[]) || [];
-          if (schoolData.length > 0) {
-            setSchools(schoolData);
-            break;
-          }
-          // Also check task result summaries
-          for (const task of run.tasks || []) {
-            if (
-              task.task_name === "school_lookup" &&
-              task.result_summary
-            ) {
-              const taskSchools =
-                (task.result_summary.schools as SchoolInfo[]) || [];
-              if (taskSchools.length > 0) {
-                setSchools(taskSchools);
-                break;
-              }
-            }
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [propertyId]);
+  // Get schools from listing data (Zillow assigned_schools or nearby_schools)
+  const rawSchools = (ld.assigned_schools || ld.nearby_schools || []) as Array<Record<string, unknown>>;
 
-  if (loading) {
-    return <div className="text-sm text-gray-500">Loading schools...</div>;
+  const schools: SchoolInfo[] = rawSchools.map((s) => ({
+    name: (s.name as string) || "Unknown",
+    rating: (s.rating as number) || 0,
+    level: (s.level as string) || "",
+    grades: (s.grades as string) || "",
+    distance_mi: (s.distance_mi as number) || (s.distance as number) || 0,
+    enrollment: s.enrollment as number | undefined,
+    student_teacher_ratio: s.student_teacher_ratio as number | undefined,
+  }));
+
+  if (schools.length === 0) {
+    return (
+      <div className="text-sm text-gray-500">
+        No school data available. Run the pipeline to fetch school information.
+      </div>
+    );
   }
 
   return <SchoolPanel schools={schools} />;

@@ -69,3 +69,33 @@
  GET / 200 in 76ms
  GET / 200 in 107ms
  GET / 200 in 68ms
+ GET / 200 in 70ms
+ GET / 200 in 67ms
+ GET / 200 in 74ms
+ GET / 200 in 68ms
+ GET / 200 in 109ms
+ GET / 200 in 71ms
+ GET / 200 in 68ms
+ GET / 200 in 68ms
+ GET / 200 in 69ms
+ GET / 200 in 72ms
+ GET / 200 in 68ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 142ms
+ GET / 200 in 73ms
+ GET / 200 in 78ms
+ GET / 200 in 72ms
+ GET / 200 in 72ms
+ GET / 200 in 72ms
+ GET / 200 in 69ms
+ ✓ Compiled in 798ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 215ms
+ GET / 200 in 199ms
+ ✓ Compiled in 829ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 210ms
+ ✓ Compiled in 1180ms (577 modules)
+ GET / 200 in 1149ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 116ms
+ GET / 200 in 78ms
+ ✓ Compiled in 920ms (577 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 172ms
+ GET / 200 in 157ms
