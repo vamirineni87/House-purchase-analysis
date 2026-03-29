@@ -3,6 +3,7 @@
 from pipa.services.alert_service import AlertService
 from pipa.services.analysis_service import AnalysisService
 from pipa.services.county_service import CountyService
+from pipa.services.decision_service import DecisionService
 from pipa.services.development_service import DevelopmentService
 from pipa.services.document_service import DocumentService
 from pipa.services.hazard_service import HazardService
@@ -22,6 +23,7 @@ __all__ = [
     "AnalysisService",
     "ListingIngestService",
     "CountyService",
+    "DecisionService",
     "DevelopmentService",
     "DocumentService",
     "HazardService",

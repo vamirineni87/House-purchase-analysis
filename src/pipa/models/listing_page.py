@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,4 +40,29 @@ class ListingPageSnapshot(Base, UUIDMixin, TimestampMixin):
     parser_version: Mapped[str] = mapped_column(
         String(30), default="1.0.0",
         comment="Version of the parser that extracted parsed_fields",
+    )
+    canonical_listing_key: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True,
+        comment="Cross-site canonical key, e.g. zillow:251682872",
+    )
+    site_listing_id: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True,
+        comment="Site-specific listing ID, e.g. 251682872_zpid",
+    )
+    scrape_success: Mapped[bool] = mapped_column(Boolean, default=True)
+    parser_strategy_used: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True,
+        comment="graphql, jsonld, dom, mixed",
+    )
+    parse_warnings: Mapped[Optional[list]] = mapped_column(
+        JSON, nullable=True,
+        comment="List of warning strings from the parser",
+    )
+    html_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True,
+        comment="Hash of saved HTML for change detection",
+    )
+    extracted_at_version: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True,
+        comment="Parser version at extraction time",
     )

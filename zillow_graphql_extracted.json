@@ -1,0 +1,129 @@
+{
+  "_source": "zillow_graphql",
+  "_method": "browser_graphql_interception",
+  "graphql_data": {
+    "price": "1367000",
+    "bedrooms": "6",
+    "bathrooms": "5",
+    "livingArea": "6045",
+    "livingAreaAboveGrade": "3",
+    "livingAreaBelowGrade": "2",
+    "yearBuilt": "2019",
+    "taxAnnualAmount": "10483",
+    "taxAssessedValue": "1284940",
+    "homeStatus": "FOR_SALE",
+    "homeType": "SINGLE_FAMILY",
+    "daysOnZillow": "2",
+    "lotSize": "20038",
+    "lotAreaValue": "0.46000918273645547",
+    "parcelId": "169468815000",
+    "county": "Loudoun County",
+    "latitude": "38.87491",
+    "longitude": "-77.53065",
+    "streetAddress": "42580 Deer Isle Dr",
+    "city": "Chantilly",
+    "state": "VA",
+    "zipcode": "20152",
+    "mlsId": "VALO2117592",
+    "timeOnZillow": "2 days",
+    "brokerageName": "Samson Properties",
+    "agentName": "Kamal Parakh",
+    "agentPhoneNumber": "703-678-7225",
+    "isNewConstruction": "false",
+    "contingentListingType": "null",
+    "description": "Nestled in the prestigious Melody Farm community, this exquisite Colonial home, built in 2019, offers a harmonious blend of luxury and comfort. Step inside to discover a gourmet kitchen, complete with an expansive island and upgraded countertops, perfect for culinary enthusiasts. The formal dining room sets the stage for elegant gatherings, while the cozy living area, featuring a gas fireplace, invites relaxation. With six spacious bedrooms and four and a half baths, including a lavish primary suite with a walk-in closet and bathroom, this residence caters to your every need. The fully finished walkout basement provides additional living space, ideal for entertainment or leisure. Enjoy the warmth of wood floors throughout the house and the ambiance of recessed lighting throughout. Set on a generous 0.46-acre lot, this home also boasts a side-entry attached garage, enhancing its curb appeal. Experience a lifestyle of sophistication and comfort in this remarkable property, where every detail has been thoughtfully curated for your enjoyment.",
+    "priceHistory": [
+      {
+        "date": "2026-03-27",
+        "price": 1367000,
+        "event": "Listed for sale"
+      },
+      {
+        "date": "2025-05-19",
+        "price": 1480000,
+        "event": "Listing removed"
+      },
+      {
+        "date": "2025-05-08",
+        "price": 1480000,
+        "event": "Price change"
+      },
+      {
+        "date": "2025-04-18",
+        "price": 1499900,
+        "event": "Price change"
+      },
+      {
+        "date": "2025-03-12",
+        "price": 1549900,
+        "event": "Price change"
+      },
+      {
+        "date": "2025-02-28",
+        "price": 1599900,
+        "event": "Listed for sale"
+      },
+      {
+        "date": "2019-11-01",
+        "price": 811265,
+        "event": "Sold"
+      },
+      {
+        "date": "2019-03-28",
+        "price": 5000,
+        "event": "Listing removed"
+      },
+      {
+        "date": "2019-02-06",
+        "price": 5000,
+        "event": "Listed for sale"
+      }
+    ],
+    "taxHistory": [
+      {
+        "year": 1743225980,
+        "taxPaid": 10482.95,
+        "assessedValue": 1302230
+      },
+      {
+        "year": 1711689980,
+        "taxPaid": 10473.94,
+        "assessedValue": 1210860
+      },
+      {
+        "year": 1680067580,
+        "taxPaid": 10466.66,
+        "assessedValue": 1196190
+      },
+      {
+        "year": 1648531580,
+        "taxPaid": 10065.81,
+        "assessedValue": 1130990
+      },
+      {
+        "year": 1616995580,
+        "taxPaid": 7854.99,
+        "assessedValue": 801530
+      },
+      {
+        "year": 1585459580,
+        "taxPaid": 7972.92,
+        "assessedValue": 770330
+      },
+      {
+        "year": 1553837180,
+        "taxPaid": 7972.92,
+        "assessedValue": 248800
+      },
+      {
+        "year": 1522301180,
+        "taxPaid": 2365.3,
+        "assessedValue": 218000
+      }
+    ],
+    "zestimate_search": "1288700",
+    "rentZestimate_search": "3999"
+  },
+  "graphql_response_count": 15,
+  "other_response_count": 13
+}

@@ -21,6 +21,7 @@ from pipa.models.document import Document, ExtractedFact, PhotoAsset, PropertyNo
 from pipa.models.alert import AlertEvent, AlertSubscription
 from pipa.models.quote import InsuranceQuote, MortgageQuote, RepairEstimate
 from pipa.models.nearby import NearbyRelationship
+from pipa.models.decision import DecisionCase, DueDiligenceItem, RecommendationSnapshot
 from pipa.models.development import DevelopmentCase, ZoningCase
 
 __all__ = [
@@ -65,6 +66,8 @@ __all__ = [
     "MortgageQuote", "InsuranceQuote", "RepairEstimate",
     # nearby.py
     "NearbyRelationship",
+    # decision.py
+    "DecisionCase", "DueDiligenceItem", "RecommendationSnapshot",
     # development.py
     "DevelopmentCase", "ZoningCase",
 ]
