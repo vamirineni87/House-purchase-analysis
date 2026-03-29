@@ -38,23 +38,50 @@ class EnrichedComp(BaseModel):
     sale_price: float
     sale_date: str
     # Dwelling (county Residential tab)
+    # Dwelling — above grade
     sqft_above_grade: Optional[int] = None
-    total_sqft: Optional[int] = None  # above + finished basement
+    total_livable_sqft: Optional[int] = None  # above grade + finished basement
     year_built: Optional[int] = None
     full_baths: Optional[int] = None
     half_baths: Optional[int] = None
     stories: Optional[int] = None
     style: Optional[str] = None
-    condition: Optional[str] = None
-    grade: Optional[str] = None
-    roof_material: Optional[str] = None
-    exterior_wall: Optional[str] = None
+    model: Optional[str] = None  # builder model name (e.g., LONGWOOD, COLORADO II)
+    condition: Optional[str] = None  # AVERAGE, GOOD, etc.
+    grade: Optional[str] = None  # construction quality
+    roof_type: Optional[str] = None  # GABLE, HIP, etc.
+    roof_material: Optional[str] = None  # ASPHALT/FBGL SHINGLE, etc.
+    exterior_wall: Optional[str] = None  # MASONRY FRONT AV, VINYL, etc.
+    heating_ac: Optional[str] = None  # CENTRAL HEAT AND AC, etc.
+    fireplaces: Optional[int] = None
+    cathedral_ceiling_sqft: Optional[int] = None
+    # Basement
     basement_total_sqft: Optional[int] = None
     basement_finished_sqft: Optional[int] = None
+    basement_unfinished_sqft: Optional[int] = None  # computed: total - finished
+    basement_entrance: Optional[str] = None  # WALK OUT, WALK UP, etc.
+    # Attic
+    attic_type: Optional[str] = None  # NONE, FINISHED, UNFINISHED
+    attic_sqft: Optional[int] = None
+    # Garage / attached structures
+    garage_sqft: Optional[int] = None
+    garage_cars: Optional[int] = None
+    deck_sqft: Optional[int] = None
+    porch_sqft: Optional[int] = None
+    area_over_garage_sqft: Optional[int] = None
+    attached_structures: Optional[list[dict]] = None  # raw list from county
+    # Foundation / lot
     foundation: Optional[str] = None
     lot_acres: Optional[float] = None
+    lot_sqft: Optional[int] = None
     # Assessment
+    assessed_land: Optional[float] = None
+    assessed_building: Optional[float] = None
     assessed_total: Optional[float] = None
+    # Parcel / subdivision
+    parcel_id: Optional[str] = None
+    subdivision: Optional[str] = None
+    builder: Optional[str] = None  # from seller in county sale records
     # Source tracking
     zillow_sqft: Optional[int] = None  # what listing site said (for conflict detection)
     county_sqft: Optional[int] = None  # what county says (above grade)

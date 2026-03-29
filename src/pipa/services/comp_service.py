@@ -1058,55 +1058,276 @@ class CompService:
 
     @staticmethod
     def _parse_county_residential(county_data: dict) -> dict:
-        """Extract structured dwelling details from county scraper output.
+        """Extract ALL dwelling details from county Residential tab.
 
-        The Loudoun scraper returns raw tab data with _key_values dicts.
-        This method extracts the specific fields needed for comp analysis
-        from the Residential tab.
+        Captures every field the county exposes — nothing is omitted.
         """
         res = county_data.get("Residential", {})
         kv = res.get("_key_values", {})
+        rows = res.get("_rows", [])
 
-        return {
+        result = {
+            # Core dwelling
             "sqft_above_grade": kv.get("Net SFLA (above grade)"),
             "year_built": kv.get("Year Built"),
             "full_baths": kv.get("Full Baths"),
             "half_baths": kv.get("Half Baths"),
             "stories": kv.get("Story Height"),
             "style": kv.get("Style"),
+            "model": kv.get("Model"),
             "condition": kv.get("Condition"),
             "grade": kv.get("Grade"),
-            "roof_material": kv.get("Roof Material"),
             "exterior_wall": kv.get("Exterior Wall Material"),
+            "dwelling_pct_complete": kv.get("Dwelling % Complete"),
+            "occupancy": kv.get("Occupancy"),
+            # Roof
+            "roof_type": kv.get("Roof Type"),
+            "roof_material": kv.get("Roof Material"),
+            # Heating / cooling
+            "heating_ac": kv.get("Heating/AC"),
+            # Interior features
+            "fireplaces": kv.get("Total Fireplaces"),
+            "cathedral_ceiling_sqft": kv.get("Cathedral Ceiling/Foyer"),
+            "additional_fixtures": kv.get("5.Additional Fixtures"),
+            "unfinished_area": kv.get("Unfinished Area"),
+            # Basement
             "basement_total_sqft": kv.get("Total Basement Area"),
+            "basement_entrance": kv.get("Basement Entrance"),
             "basement_finished_sqft": kv.get("Finished Basement Sq Ft"),
+            "basement_bedrooms": kv.get("Bsmnt Dens/Bdrms"),
+            "basement_garage_cars": kv.get("Bsmnt Garage # Cars"),
+            # Foundation / attic
             "foundation": kv.get("Foundation Type"),
+            "attic_type": kv.get("Attic Type"),
+            "attic_sqft": kv.get("Total Attic Area"),
+            # Address / location
+            "property_address": kv.get("Property Address"),
+            "city_state_zip": kv.get("City, State, Zip"),
+            "card": kv.get("Card"),
         }
+
+        # Compute derived fields
+        bsmt_total = _safe_int(result.get("basement_total_sqft"))
+        bsmt_finished = _safe_int(result.get("basement_finished_sqft"))
+        if bsmt_total is not None and bsmt_finished is not None:
+            result["basement_unfinished_sqft"] = bsmt_total - bsmt_finished
+
+        above = _safe_int(result.get("sqft_above_grade"))
+        if above is not None and bsmt_finished is not None:
+            result["total_livable_sqft"] = above + bsmt_finished
+
+        # Parse attached structures from rows
+        # Format: [card, line, type1, type2?, sqft, yr_built?, pct_complete]
+        structures = []
+        for row in rows:
+            if len(row) >= 3 and row[0].isdigit():
+                # This is a structure line
+                struct = {"raw": row}
+                # Identify by keywords
+                row_joined = " ".join(row).upper()
+                if "GARAGE" in row_joined:
+                    struct["type"] = "garage"
+                elif "DECK" in row_joined:
+                    struct["type"] = "deck"
+                elif "PORCH" in row_joined or "PATIO" in row_joined or "COVERED" in row_joined:
+                    struct["type"] = "porch"
+                elif "AREA OVER GARAGE" in row_joined:
+                    struct["type"] = "area_over_garage"
+                elif "BASEMENT" in row_joined:
+                    struct["type"] = "basement"
+                elif "PRIMARY" in row_joined:
+                    struct["type"] = "primary"
+                elif "ADDN" in row_joined or "ADDITION" in row_joined:
+                    struct["type"] = "addition"
+                else:
+                    struct["type"] = "other"
+                # Try to extract sqft from the row
+                for val in row:
+                    sqft = _safe_int(val)
+                    if sqft and 10 < sqft < 50000:
+                        struct["sqft"] = sqft
+                        break
+                # Try to extract year
+                for val in row:
+                    yr = _safe_int(val)
+                    if yr and 1900 < yr < 2100:
+                        struct["year_built"] = yr
+                        break
+                structures.append(struct)
+
+        result["attached_structures"] = structures
+
+        # Extract specific structure sqft for easy access
+        for s in structures:
+            stype = s.get("type", "")
+            sqft = s.get("sqft")
+            if stype == "garage" and sqft:
+                result["garage_sqft"] = sqft
+            elif stype == "deck" and sqft:
+                result["deck_sqft"] = result.get("deck_sqft", 0) + sqft
+            elif stype == "porch" and sqft:
+                result["porch_sqft"] = result.get("porch_sqft", 0) + sqft
+            elif stype == "area_over_garage" and sqft:
+                result["area_over_garage_sqft"] = sqft
+
+        return result
 
     @staticmethod
     def _parse_county_values(county_data: dict) -> dict:
-        """Extract assessment values from county Values tab."""
+        """Extract ALL assessment values from county Values tab."""
         values = county_data.get("Values", {})
         kv = values.get("_key_values", {})
+        rows = values.get("_rows", [])
 
-        return {
+        result = {
+            # Current year
             "assessed_land": kv.get("Fair Market Land"),
             "assessed_building": kv.get("Fair Market Building"),
+            "prorated_building": kv.get("Prorated Bldg"),
             "assessed_total": kv.get("Fair Market Total"),
+            "land_use_value": kv.get("Land Use Value"),
+            "taxable_value": kv.get("Total Taxable Value"),
+            "deferred_land_use": kv.get("*Deferred Land Use Value"),
+            "tax_exempt_code": kv.get("Tax Exempt Code"),
+            "tax_exempt_land": kv.get("Tax Exempt Land"),
+            "tax_exempt_building": kv.get("Tax Exempt Building"),
+            "tax_exempt_total": kv.get("Tax Exempt Total"),
         }
+
+        # Parse assessment history from rows
+        # Look for year headers like "2025 Values", "2024 Values"
+        history = []
+        current_year = None
+        for row in rows:
+            row_joined = " ".join(row)
+            # Check for year header
+            year_match = re.search(r"(20[12]\d)\s*Values", row_joined)
+            if year_match:
+                current_year = int(year_match.group(1))
+                continue
+            # Check for Notice/Landbook rows with values
+            if current_year and len(row) >= 4 and row[0] in ("Notice", "Landbook"):
+                entry = {
+                    "year": current_year,
+                    "process_type": row[0],
+                    "land": row[1] if len(row) > 1 else None,
+                    "building": row[2] if len(row) > 2 else None,
+                }
+                # Find the total (usually the last dollar amount)
+                for val in reversed(row):
+                    if val.startswith("$"):
+                        entry["total"] = val
+                        break
+                history.append(entry)
+
+        result["assessment_history"] = history
+
+        return result
 
     @staticmethod
     def _parse_county_sale(county_data: dict) -> dict:
-        """Extract most recent sale from county Sales tab."""
+        """Extract ALL sale/transfer data from county Sales tab."""
         sales = county_data.get("Sales / Transfers", {})
         kv = sales.get("_key_values", {})
+        rows = sales.get("_rows", [])
 
-        return {
+        result = {
+            # Most recent sale details
             "sale_date": kv.get("Sale Date"),
             "sale_price": kv.get("Sale Price"),
             "seller": kv.get("Seller"),
             "buyer": kv.get("Buyer"),
+            "valuation_code": kv.get("Valuation Code"),
+            "instrument_number": kv.get("Instrument Number"),
+            "recordation_date": kv.get("Recordation Date"),
+            "deed_book_page": kv.get("Deed Book and Page"),
+            "multi_parcel": kv.get("Multi-Parcel Sale (# of Parcels)"),
         }
+
+        # Parse sale history from rows
+        sale_history = []
+        for row in rows:
+            if len(row) >= 3 and re.match(r"\d{2}/\d{2}/\d{4}", row[0]):
+                sale_history.append({
+                    "date": row[0],
+                    "price": row[1],
+                    "buyer": row[2] if len(row) > 2 else None,
+                })
+        result["sale_history"] = sale_history
+
+        return result
+
+    @staticmethod
+    def _parse_county_profile(county_data: dict) -> dict:
+        """Extract profile/parcel data from county Profile tab."""
+        profile = county_data.get("Profile", {})
+        kv = profile.get("_key_values", {})
+
+        return {
+            "parcel_id": kv.get("PARID") or next(
+                (v for k, v in kv.items() if k.startswith("PARID")), None
+            ),
+            "owner": kv.get("Name"),
+            "mailing_address": kv.get("Mailing Address"),
+            "tax_map": kv.get("Tax Map #"),
+            "state_use_class": kv.get("State Use Class"),
+            "lot_acres": kv.get("Total Land Area (Acreage)"),
+            "election_district": kv.get("Election District"),
+            "billing_district": kv.get("Billing District"),
+            "structure_occupancy": kv.get("Structure Occupancy"),
+            "subdivision": kv.get("Subdivision"),
+            "legal_description": kv.get("Legal Description"),
+            "instrument_number": kv.get("Instrument Number"),
+            "adu": kv.get("Affordable Dwelling Unit (Y/N)"),
+            "solar_exemption": kv.get("Solar Exemption?"),
+            "special_tax_district": kv.get("Special Ad Valorem Tax District"),
+        }
+
+    @staticmethod
+    def _parse_county_land(county_data: dict) -> dict:
+        """Extract land details from county Land tab."""
+        land = county_data.get("Land", {})
+        kv = land.get("_key_values", {})
+
+        return {
+            "land_sqft": kv.get("Square Feet"),
+            "land_acres": kv.get("Acres"),
+            "land_value": kv.get("Market Land Value"),
+            "land_type": kv.get("Land Type"),
+            "land_code": kv.get("Land Code"),
+            "primary_zoning": kv.get("Primary Zoning"),
+            "price_per_sqft_land": kv.get("$/Sq Ft"),
+            "price_per_acre": kv.get("$/Acre"),
+            "public_water": kv.get("Public Water Available"),
+            "public_sewer": kv.get("Public Sewer Available"),
+            "easements": kv.get("Easements"),
+            "location_code": kv.get("Location Code"),
+            "municipality": kv.get("Municipality"),
+            "zoning_breakout": kv.get("Zoning Breakout (Code/Acres)"),
+            "flood_plain_acres": kv.get("Major Flood Plain Acres"),
+            "steep_slope_acres": kv.get("Greater than 25% Steep Slope Acres"),
+        }
+
+    @staticmethod
+    def _parse_county_detached(county_data: dict) -> list[dict]:
+        """Extract detached structures from county Detached Structures tab."""
+        det = county_data.get("Detached Structures", {})
+        rows = det.get("_rows", [])
+
+        structures = []
+        for row in rows:
+            if len(row) >= 6 and row[0].isdigit():
+                structures.append({
+                    "card": row[0],
+                    "line": row[1] if len(row) > 1 else None,
+                    "type": row[2] if len(row) > 2 else None,
+                    "size": row[3] if len(row) > 3 else None,
+                    "year_built": row[4] if len(row) > 4 else None,
+                    "quality": row[5] if len(row) > 5 else None,
+                    "condition": row[6] if len(row) > 6 else None,
+                    "value": row[7] if len(row) > 7 else None,
+                })
+        return structures
 
     # ==================================================================
     # Subject property loader
