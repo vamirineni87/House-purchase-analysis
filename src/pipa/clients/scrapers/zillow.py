@@ -379,6 +379,70 @@ class ZillowScraper(BaseScraper):
                     for d, p, e in entries
                 ]
 
+                # Compute CDOM (cumulative days on market) from price history
+                # Only count "Listed for sale" events (not "Sold" events or lot listings)
+                # A listing episode = Listed → (price changes) → Removed/Sold
+                from datetime import date as date_type
+                listed_events = []  # (date, price)
+                removed_events = []  # (date,)
+                sold_events = []  # (date, price)
+
+                for d, p, e in entries:
+                    try:
+                        dt = date_type.fromisoformat(d)
+                        e_lower = e.lower()
+                        price = int(p)
+                        # Skip lot listings (very low price relative to others)
+                        if price < 50000:
+                            continue
+                        if "listed" in e_lower and "removed" not in e_lower:
+                            listed_events.append((dt, price))
+                        elif "removed" in e_lower:
+                            removed_events.append(dt)
+                        elif "sold" in e_lower:
+                            sold_events.append((dt, price))
+                    except (ValueError, TypeError):
+                        pass
+
+                if listed_events:
+                    # Sort chronologically
+                    listed_events.sort()
+                    first_listed = listed_events[0][0]
+                    last_listed = listed_events[-1][0]
+
+                    # CDOM = sum of all active listing periods
+                    # Each period: listed_date → next removed_date (or today)
+                    cdom = 0
+                    for i, (list_dt, _) in enumerate(listed_events):
+                        # Find the end of this listing period
+                        end_dt = date_type.today()
+                        for rem_dt in sorted(removed_events):
+                            if rem_dt > list_dt:
+                                end_dt = rem_dt
+                                break
+                        for sold_dt, _ in sorted(sold_events):
+                            if sold_dt > list_dt and sold_dt < end_dt:
+                                end_dt = sold_dt
+                                break
+                        # Don't double-count overlapping periods
+                        period_days = (end_dt - list_dt).days
+                        cdom += max(0, period_days)
+
+                    result["cdom"] = cdom
+                    result["dom"] = result.get("days_on_zillow", (date_type.today() - last_listed).days)
+                    result["first_listed_date"] = first_listed.isoformat()
+                    result["current_listed_date"] = last_listed.isoformat()
+                    result["listing_episodes_count"] = len(listed_events)
+                    result["total_price_reductions"] = len([
+                        e for _, _, e in entries if "price change" in e.lower()
+                    ])
+                    # Original ask vs current ask
+                    if len(listed_events) >= 1:
+                        result["original_ask"] = listed_events[0][1]
+                        result["total_reduction"] = listed_events[0][1] - result.get("price", 0)
+                    if len(listed_events) > 1:
+                        result["was_relisted"] = True
+
         # Tax history (timestamps are Unix epoch in ms)
         th_section = re.search(r'"taxHistory"\s*:\s*\[(.*?)\]', main_body, re.DOTALL)
         if th_section:
@@ -400,16 +464,58 @@ class ZillowScraper(BaseScraper):
                         "assessed_value": int(val),
                     })
 
-        # Schools
-        school_entries = re.findall(
-            r'"schoolName"\s*:\s*"([^"]+)".*?"rating"\s*:\s*(\d+).*?"distance"\s*:\s*([\d.]+).*?"level"\s*:\s*"([^"]+)"',
-            main_body,
-        )
-        if school_entries:
-            result["schools"] = [
-                {"name": n, "rating": int(r), "distance_mi": float(d), "level": l}
-                for n, r, d, l in school_entries
-            ]
+        # Schools — parse from assignedSchools JSON array
+        # Zillow provides: name, rating, grades, distance, level, enrollment,
+        # studentTeacherRatio, studentCounselorRatio, link, percentageOfFullTimeTeachersWhoAreCertified
+        assigned_match = re.search(r'"assignedSchools"\s*:\s*\[(.*?)\]', main_body, re.DOTALL)
+        if assigned_match:
+            try:
+                schools_json = json.loads("[" + assigned_match.group(1) + "]")
+                result["assigned_schools"] = [
+                    {
+                        "name": s.get("name"),
+                        "rating": s.get("rating"),
+                        "grades": s.get("grades"),
+                        "distance_mi": s.get("distance"),
+                        "level": s.get("level"),
+                        "enrollment": s.get("enrollment"),
+                        "student_teacher_ratio": s.get("studentTeacherRatio"),
+                        "student_counselor_ratio": s.get("studentCounselorRatio"),
+                        "pct_certified_teachers": s.get("percentageOfFullTimeTeachersWhoAreCertified"),
+                        "greatschools_link": s.get("link"),
+                        "district_name": s.get("districtName"),
+                    }
+                    for s in schools_json
+                ]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Also get nearby schools (not just assigned)
+        nearby_schools_match = re.search(r'"schools"\s*:\s*\[(.*?)\]', main_body)
+        if nearby_schools_match and "assigned_schools" not in result:
+            try:
+                schools_json = json.loads("[" + nearby_schools_match.group(1) + "]")
+                result["nearby_schools"] = [
+                    {
+                        "name": s.get("name"),
+                        "rating": s.get("rating"),
+                        "grades": s.get("grades"),
+                        "distance_mi": s.get("distance"),
+                        "greatschools_link": s.get("link"),
+                    }
+                    for s in schools_json
+                ]
+            except (json.JSONDecodeError, TypeError):
+                # Fall back to regex
+                school_entries = re.findall(
+                    r'"name"\s*:\s*"([^"]+)".*?"rating"\s*:\s*(\d+).*?"distance"\s*:\s*([\d.]+)',
+                    nearby_schools_match.group(1),
+                )
+                if school_entries:
+                    result["nearby_schools"] = [
+                        {"name": n, "rating": int(r), "distance_mi": float(d)}
+                        for n, r, d in school_entries
+                    ]
 
         # Zestimate from search response (more reliable than main)
         if search_body:
