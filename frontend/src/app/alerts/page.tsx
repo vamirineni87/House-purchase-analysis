@@ -1,9 +1,7 @@
 "use client";
 
 /**
- * Alerts feed page.
- * Chronological list from GET /alerts.
- * Severity badges. Mark as read.
+ * Alerts feed — chronological list with severity badges and mark-read.
  */
 
 import { useEffect, useState } from "react";
@@ -31,6 +29,10 @@ function alertTypeLabel(type: string): string {
     price_threshold_exceeded: "Budget Alert",
     high_dom: "High DOM",
     significant_price_drop: "Big Price Drop",
+    new_listing: "New Listing",
+    pipeline_failed: "Pipeline Failed",
+    data_stale: "Data Stale",
+    comp_update: "Comp Update",
   };
   return labels[type] || type.replace(/_/g, " ");
 }
@@ -93,7 +95,7 @@ export default function AlertsPage() {
             </p>
           )}
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center">
           <label className="flex items-center gap-2 text-sm text-gray-600">
             <input
               type="checkbox"
@@ -136,7 +138,7 @@ export default function AlertsPage() {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <Badge
                       label={alert.severity}
                       variant={severityBadgeVariant(alert.severity)}
