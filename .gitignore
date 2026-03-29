@@ -39,3 +39,34 @@ htmlcov/
 
 # Cache
 .cache/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Document storage
+storage/
+uploads/
+
+# Scraper artifacts
+screenshots/
+html_snapshots/
+
+# Raw payload archive
+raw_payloads/
+
+# Node / Frontend
+node_modules/
+.next/
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/.env.local
+
+# Playwright
+playwright-report/
+test-results/

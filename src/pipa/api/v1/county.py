@@ -1,0 +1,83 @@
+"""County data endpoints — assessments, permits, deeds, and refresh."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from pipa.core.dependencies import get_db
+from pipa.models.property import Property
+from pipa.schemas.county import (
+    AssessmentResponse,
+    CountyRefreshResult,
+    DeedResponse,
+    PermitResponse,
+)
+from pipa.services.county_service import CountyService
+
+router = APIRouter(tags=["county"])
+
+
+async def _verify_property(db: AsyncSession, property_id: str) -> None:
+    """Raise 404 if the property does not exist."""
+    result = await db.execute(
+        select(Property).where(Property.id == property_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+
+@router.post(
+    "/properties/{property_id}/county/refresh",
+    response_model=CountyRefreshResult,
+)
+async def refresh_county_data(
+    property_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger a county data refresh for a property.
+
+    Fetches latest assessments, permits, and deeds from county sources.
+    """
+    await _verify_property(db, property_id)
+    return await CountyService.refresh_county_data(db, property_id)
+
+
+@router.get(
+    "/properties/{property_id}/county/assessments",
+    response_model=list[AssessmentResponse],
+)
+async def get_assessments(
+    property_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all assessment snapshots for a property."""
+    await _verify_property(db, property_id)
+    return await CountyService.get_assessments(db, property_id)
+
+
+@router.get(
+    "/properties/{property_id}/county/permits",
+    response_model=list[PermitResponse],
+)
+async def get_permits(
+    property_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all permit records for a property."""
+    await _verify_property(db, property_id)
+    return await CountyService.get_permits(db, property_id)
+
+
+@router.get(
+    "/properties/{property_id}/county/deeds",
+    response_model=list[DeedResponse],
+)
+async def get_deeds(
+    property_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all deed records for a property."""
+    await _verify_property(db, property_id)
+    return await CountyService.get_deeds(db, property_id)

@@ -1,57 +1,60 @@
-# Home Purchase Analysis Tool - Configuration
-# Copy this file to config.yaml and fill in your API keys
-
-api_keys:
-  # FRED API - Federal Reserve mortgage rates (free: https://fred.stlouisfed.org/docs/api/api_key.html)
-  fred: ""
-  # RentCast - property data & comps (50 free calls/month: https://www.rentcast.io/api)
-  rentcast: ""
-  # GreatSchools - school ratings (free: https://www.greatschools.org/api/)
-  greatschools: ""
-  # Walk Score API (free for consumer apps: https://www.walkscore.com/professional/api.php)
-  walkscore: ""
-  # API Ninjas - property tax data (free tier: https://api-ninjas.com/)
-  api_ninjas: ""
-  # US Census Bureau API (free: https://api.census.gov/data/key_signup.html)
-  census: ""
-  # No API key needed for: FBI Crime Data Explorer, OpenFEMA
+# PIPA Configuration
+# Copy to config.yaml and customize
 
 defaults:
-  # Annual homeowners insurance as percentage of home value
-  homeowners_insurance_annual_pct: 0.0035
-  # Annual PMI as percentage of loan amount (when LTV > 80%)
-  pmi_annual_pct: 0.005
-  # LTV threshold below which PMI is removed
-  pmi_ltv_threshold: 0.80
-  # Default property tax rate (used when API unavailable)
-  property_tax_rate: 0.012
-  # Closing costs as percentage of purchase price
-  closing_cost_pct: 0.03
-  # Expected annual home appreciation rate
+  # Financial assumptions
+  mortgage_rate_30yr: 6.5
+  mortgage_rate_15yr: 5.9
+  homeowners_insurance_rate: 0.0035  # % of home value annually
+  pmi_rate: 0.005                    # % of loan amount when LTV > 80%
+  pmi_threshold: 0.80
+  property_tax_rate: 0.012           # default, overridden by county data
   appreciation_rate: 0.03
-  # General inflation rate
   inflation_rate: 0.025
-  # Estimated moving costs
-  moving_cost_estimate: 5000.0
-  # Annual maintenance as percentage of home value
-  maintenance_annual_pct: 0.01
-  # Vacancy rate for rental income analysis
-  vacancy_rate: 0.05
-  # Marginal federal tax rate (for deduction calculations)
+  maintenance_rate: 0.01             # % of home value annually
+  closing_cost_rate: 0.03
+  vacancy_rate: 0.05                 # if renting first home
   marginal_tax_rate: 0.24
-  # Filing status: single or married
-  filing_status: "married"
+  filing_status: married             # married or single
 
-# Your current/first home details (for sell vs rent analysis)
+  # Replacement reserve defaults (years)
+  roof_lifespan: 25
+  hvac_lifespan: 15
+  water_heater_lifespan: 12
+  electrical_panel_lifespan: 40
+  windows_lifespan: 25
+  siding_lifespan: 30
+
+# Current home (for sell-vs-rent analysis)
 current_home:
   purchase_price: 0
-  purchase_date: "2020-01-01"
-  estimated_current_value: 0
-  remaining_mortgage_balance: 0
-  monthly_payment: 0
-  mortgage_rate: 0.0
+  purchase_date: ""
+  current_mortgage_payment: 0
+  estimated_value: 0
+  remaining_mortgage: 0
+  filing_status: married
+  years_as_primary: 0
+  estimated_monthly_rent: 0
   annual_property_tax: 0
   annual_insurance: 0
-  capital_improvements: 0
-  years_as_primary_residence: 0
-  estimated_monthly_rent: 0
+
+# County-specific settings
+counties:
+  fairfax:
+    property_tax_rate: 0.0111  # $1.11 per $100 assessed value (FY2024)
+    gis_base_url: "https://www.fairfaxcounty.gov/euclid/rest/services/GIS/Property/MapServer"
+    icare_base_url: "https://icare.fairfaxcounty.gov"
+    plus_base_url: "https://plus.fairfaxcounty.gov"
+  loudoun:
+    property_tax_rate: 0.00875  # $0.875 per $100 assessed value (FY2024)
+    gis_base_url: "https://geohub-loudoungis.opendata.arcgis.com"
+    parcel_db_url: "https://www.loudoun.gov/parceldatabase"
+    landmarc_url: "https://www.loudoun.gov/5823/LandMARC-Land-Management-Applications-Re"
+
+# Scraper settings
+scrapers:
+  rate_limit_per_second: 1.0
+  cache_ttl_hours: 24
+  playwright_headless: true
+  save_html_snapshots: true
+  save_screenshots_on_error: true
