@@ -60,6 +60,7 @@ def create_app() -> FastAPI:
     from pipa.api.v1.rates import router as rates_router
     from pipa.api.v1.surrounding import router as surrounding_router
     from pipa.api.v1.decisions import router as decisions_router
+    from pipa.api.v1.refresh import router as refresh_router
 
     app.include_router(properties_router, prefix="/api/v1")
     app.include_router(watchlist_router, prefix="/api/v1")
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(rates_router, prefix="/api/v1")
     app.include_router(surrounding_router, prefix="/api/v1")
     app.include_router(decisions_router, prefix="/api/v1")
+    app.include_router(refresh_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

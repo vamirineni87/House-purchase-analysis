@@ -16,11 +16,14 @@ from pipa.services.permit_service import PermitService
 from pipa.services.property_import import PropertyImportService
 from pipa.services.property_resolver import PropertyResolverService
 from pipa.services.property_service import PropertyService
+from pipa.services.data_refresh import DataRefreshService
+from pipa.services.school_service import SchoolService
 from pipa.services.source_reconciliation import SourceReconciliationService
 
 __all__ = [
     "AlertService",
     "AnalysisService",
+    "DataRefreshService",
     "ListingIngestService",
     "CountyService",
     "DecisionService",
@@ -35,5 +38,6 @@ __all__ = [
     "PropertyImportService",
     "PropertyResolverService",
     "PropertyService",
+    "SchoolService",
     "SourceReconciliationService",
 ]

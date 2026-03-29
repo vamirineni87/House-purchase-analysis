@@ -3,6 +3,7 @@
 from .base import BaseScraper
 from .fairfax_icare import FairfaxICareScraper
 from .fairfax_plus import FairfaxPLUSScraper
+from .lcps_schools import LCPSSchoolScraper
 from .loudoun_landmarc import LoudounLandMARCScraper
 from .loudoun_parcel import LoudounParcelScraper
 from .redfin import RedfinScraper
@@ -13,6 +14,7 @@ __all__ = [
     "BaseScraper",
     "FairfaxICareScraper",
     "FairfaxPLUSScraper",
+    "LCPSSchoolScraper",
     "LoudounLandMARCScraper",
     "LoudounParcelScraper",
     "RedfinScraper",
