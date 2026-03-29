@@ -48,7 +48,7 @@ class ListingIngestService:
     def __init__(
         self,
         storage_dir: Path = Path("./storage"),
-        headless: bool = True,
+        headless: bool = False,  # Non-headless works much better for CAPTCHA bypass
     ):
         self.storage_dir = storage_dir
         self.headless = headless

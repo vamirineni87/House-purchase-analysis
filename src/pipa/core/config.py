@@ -80,7 +80,7 @@ class CountyConfig(BaseSettings):
 class ScraperConfig(BaseSettings):
     rate_limit_per_second: float = 1.0
     cache_ttl_hours: int = 24
-    playwright_headless: bool = True
+    playwright_headless: bool = False  # Non-headless avoids most CAPTCHA detection
     save_html_snapshots: bool = True
     save_screenshots_on_error: bool = True
 
