@@ -3,63 +3,19 @@
    - Network:      http://10.5.0.2:3000
 
  ✓ Starting...
- ✓ Ready in 3.7s
+ ✓ Ready in 4.7s
  ○ Compiling / ...
- ✓ Compiled / in 1889ms (535 modules)
- GET / 200 in 2783ms
- ○ Compiling /properties/[id] ...
- ✓ Compiled /properties/[id] in 900ms (554 modules)
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 2379ms
-Failed to proxy http://127.0.0.1:8000/api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/run [Error: socket hang up] { code: 'ECONNRESET' }
-[Error: socket hang up] { code: 'ECONNRESET' }
- ○ Compiling /_error ...
- ✓ Compiled /_error in 1265ms (900 modules)
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 1280ms
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 68ms
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 688ms
- ⨯ ./src/app/properties/[id]/page.tsx
-Module parse failed: Identifier 'ActionButton' has already been declared (831:9)
-| // Action Button
-| // =====================================================================
-> function ActionButton(param) {
-|     let { label, onClick, loading, disabled, variant = "primary" } = param;
-|     const base = variant === "primary" ? "text-white bg-blue-600 hover:bg-blue-700" : "text-gray-700 bg-gray-100 hover:bg-gray-200";
-
-Import trace for requested module:
-./src/app/properties/[id]/page.tsx
- ⨯ ./src/app/properties/[id]/page.tsx
-Module parse failed: Identifier 'ActionButton' has already been declared (831:9)
-| // Action Button
-| // =====================================================================
-> function ActionButton(param) {
-|     let { label, onClick, loading, disabled, variant = "primary" } = param;
-|     const base = variant === "primary" ? "text-white bg-blue-600 hover:bg-blue-700" : "text-gray-700 bg-gray-100 hover:bg-gray-200";
-
-Import trace for requested module:
-./src/app/properties/[id]/page.tsx
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 500 in 6856ms
- GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 500 in 94ms
+ ✓ Compiled / in 3.6s (549 modules)
+ GET / 200 in 4838ms
  ○ Compiling /properties ...
- ⨯ ./src/app/properties/[id]/page.tsx
-Module parse failed: Identifier 'ActionButton' has already been declared (831:9)
-| // Action Button
-| // =====================================================================
-> function ActionButton(param) {
-|     let { label, onClick, loading, disabled, variant = "primary" } = param;
-|     const base = variant === "primary" ? "text-white bg-blue-600 hover:bg-blue-700" : "text-gray-700 bg-gray-100 hover:bg-gray-200";
-
-Import trace for requested module:
-./src/app/properties/[id]/page.tsx
- ⨯ ./src/app/properties/[id]/page.tsx
-Module parse failed: Identifier 'ActionButton' has already been declared (831:9)
-| // Action Button
-| // =====================================================================
-> function ActionButton(param) {
-|     let { label, onClick, loading, disabled, variant = "primary" } = param;
-|     const base = variant === "primary" ? "text-white bg-blue-600 hover:bg-blue-700" : "text-gray-700 bg-gray-100 hover:bg-gray-200";
-
-Import trace for requested module:
-./src/app/properties/[id]/page.tsx
- GET /properties 500 in 2211ms
- GET /properties 500 in 36ms
+ ✓ Compiled /properties in 861ms (551 modules)
+ GET /properties 200 in 1298ms
+ ○ Compiling /properties/[id] ...
+ ✓ Compiled /properties/[id] in 983ms (556 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 2669ms
+ GET /properties 200 in 133ms
+ ✓ Compiled / in 252ms (331 modules)
+ GET / 200 in 605ms
+ GET /properties 200 in 167ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 185ms
 ^C

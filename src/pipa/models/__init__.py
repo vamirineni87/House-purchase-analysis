@@ -24,6 +24,7 @@ from pipa.models.nearby import NearbyRelationship
 from pipa.models.decision import DecisionCase, DueDiligenceItem, RecommendationSnapshot
 from pipa.models.development import DevelopmentCase, ZoningCase
 from pipa.models.pipeline_run import PipelineRun, PipelineTaskRun
+from pipa.models.app_setting import AppSetting
 
 __all__ = [
     "Base",
@@ -73,4 +74,6 @@ __all__ = [
     "DevelopmentCase", "ZoningCase",
     # pipeline_run.py
     "PipelineRun", "PipelineTaskRun",
+    # app_setting.py
+    "AppSetting",
 ]
