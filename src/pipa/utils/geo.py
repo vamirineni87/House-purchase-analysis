@@ -100,32 +100,75 @@ def normalize_address(address_str: str) -> str:
 
 
 def detect_county(city: str, state: str, zip_code: str = "") -> Optional[str]:
-    """Attempt to detect county from city/zip for Virginia addresses.
+    """Detect county from city/zip for Virginia addresses.
 
-    This is a heuristic lookup — proper geocoding should be used for accuracy.
+    ZIP code takes priority over city name because some cities
+    straddle county lines (e.g., Chantilly spans Fairfax and Loudoun).
     """
     if state.upper() != "VA":
         return None
 
+    # ZIP code is the most reliable indicator for border cities
+    zip_clean = zip_code.strip()[:5]
+    loudoun_zips = {
+        "20105", "20117", "20118", "20129", "20132", "20134", "20135",
+        "20141", "20142", "20143", "20144", "20146", "20147", "20148",
+        "20149", "20151", "20152", "20158", "20159", "20160", "20163",
+        "20164", "20165", "20166", "20167", "20175", "20176", "20177",
+        "20178", "20180", "20189", "20197",
+    }
+    fairfax_zips = {
+        "22003", "22009", "22015", "22027", "22030", "22031", "22032",
+        "22033", "22034", "22035", "22036", "22037", "22038", "22039",
+        "22041", "22042", "22043", "22044", "22046", "22060", "22066",
+        "22079", "22101", "22102", "22103", "22121", "22122", "22124",
+        "22150", "22151", "22152", "22153", "22180", "22181", "22182",
+        "22183", "22185", "22199",
+    }
+
+    if zip_clean in loudoun_zips:
+        return "loudoun"
+    if zip_clean in fairfax_zips:
+        return "fairfax"
+
+    # Fall back to city name for cities that don't straddle
     city_lower = city.strip().lower()
 
-    # Known city-to-county mappings for our target area
-    fairfax_cities = {
+    fairfax_only_cities = {
         "fairfax", "falls church", "vienna", "annandale", "burke",
-        "centreville", "chantilly", "clifton", "dunn loring", "great falls",
-        "herndon", "lorton", "mclean", "merrifield", "mount vernon",
-        "oakton", "reston", "springfield", "tysons", "tysons corner",
+        "clifton", "dunn loring", "great falls",
+        "lorton", "mclean", "merrifield", "mount vernon",
+        "oakton", "springfield", "tysons", "tysons corner",
     }
-    loudoun_cities = {
-        "leesburg", "ashburn", "sterling", "purcellville", "lovettsville",
+    loudoun_only_cities = {
+        "leesburg", "ashburn", "purcellville", "lovettsville",
         "middleburg", "round hill", "hamilton", "hillsboro", "aldie",
         "brambleton", "broadlands", "south riding", "stone ridge",
-        "lansdowne", "dulles",
+        "lansdowne",
     }
+    # Cities that straddle — need ZIP to resolve
+    # "chantilly": 20151/20152 = Loudoun, 20151 can be either
+    # "centreville": 20120/20121 = Fairfax, 20124 = Fairfax
+    # "herndon": 20170/20171 = Fairfax, but some parts near Loudoun
+    # "reston": 20190/20191/20194 = Fairfax
+    # "sterling": 20164/20165/20166 = Loudoun
+    # "dulles": 20166 = Loudoun
 
-    if city_lower in fairfax_cities:
+    if city_lower in fairfax_only_cities:
         return "fairfax"
-    if city_lower in loudoun_cities:
+    if city_lower in loudoun_only_cities:
         return "loudoun"
+
+    # Border cities without ZIP — best guess
+    border_defaults = {
+        "chantilly": "loudoun",  # More Chantilly addresses are Loudoun-side
+        "centreville": "fairfax",
+        "herndon": "fairfax",
+        "reston": "fairfax",
+        "sterling": "loudoun",
+        "dulles": "loudoun",
+    }
+    if city_lower in border_defaults:
+        return border_defaults[city_lower]
 
     return None
