@@ -1,280 +1,161 @@
 # PIPA — TODO / Known Gaps
 
-## Critical: Data Conflict Handling
+Updated: March 30, 2026
 
-The evidence model and reconciliation service exist, but aren't wired into the analysis and decision flows.
-
-### TODO-001: Analysis engines should use reconciled values
-**Priority:** High
-**Status:** Open
-
-Analysis engines (financial, tax, investment, condition, etc.) currently take raw parameters passed by the caller. They should receive values that have been reconciled across sources — i.e., the analysis_service should call `SourceReconciliationService.reconcile_field()` for key fields (sqft, year_built, lot_size, hoa, annual_tax) before passing them to the analysis functions.
-
-**Where:** `src/pipa/services/analysis_service.py` — before calling each analysis engine, reconcile key fields from the evidence table and pass the best-confidence values.
-
-### TODO-002: Auto-flag conflicts as red flags in decision packet
-**Priority:** High
-**Status:** Open
-
-When `generate_decision_packet()` runs, it should call `SourceReconciliationService.find_conflicts()` and surface any conflicts as red flags in the Hidden Cost / QUICK TAKE sections. Example: "Zillow lists 6,045 sqft but county records show 3,845 sqft above grade — verify whether finished basement is included."
-
-**Where:** `src/pipa/services/decision_service.py` — in `generate_decision_packet()`, after loading analysis results, also run conflict detection and append to red_flags.
-
-### TODO-003: Auto-create alerts when county data contradicts portal data
-**Priority:** Medium
-**Status:** Open
-
-When county enrichment runs (`county_service.refresh_county_data()`), compare newly stored evidence items against existing portal-sourced evidence. If any key field differs, create an `AlertEvent` with severity based on the magnitude of the difference (e.g., 5% sqft difference = warning, 20% = critical).
-
-**Where:** `src/pipa/services/county_service.py` — after storing county evidence items, compare against existing evidence for same fields. `src/pipa/services/alert_service.py` to create alerts.
-
-### TODO-004: Listing ingest should check for existing conflicting evidence
-**Priority:** Medium
-**Status:** Open
-
-When `ListingIngestService.ingest_from_url()` stores evidence items from Zillow/Redfin, it should check if any existing evidence (from a prior source) conflicts. If so, log a warning and optionally create a due diligence item.
-
-**Where:** `src/pipa/services/listing_ingest.py` — after creating evidence items, call `SourceReconciliationService.find_conflicts()`.
-
-### TODO-005: Conflict display in dashboard
-**Priority:** Medium
-**Status:** Open
-
-No UI currently shows data conflicts. The property detail page should have a "Data Quality" section or badge that shows:
-- Number of fields with conflicting sources
-- Which source is being trusted and why
-- Option to override (manual user input as highest confidence)
-
-**Where:** `frontend/src/app/properties/[id]/page.tsx` — new tab or section. API: `GET /properties/{id}/conflicts` (endpoint doesn't exist yet).
+## Status Legend
+- DONE = implemented and tested
+- PARTIAL = implemented but needs work
+- OPEN = not started
 
 ---
 
-## Dashboard Gaps
+## Critical: Pipeline & Data Flow
 
-### TODO-006: Analysis results not displayed per property
-**Priority:** High
-**Status:** Open
+### TODO-001: Pipeline resolver uses reconciled values
+**Priority:** High | **Status:** DONE
+Pipeline step 3 (resolver) merges county > listing > AI-extracted sources by confidence rank.
+Analysis engines run on canonical resolved values, not raw listing data.
 
-Only the Financial tab has a working panel (`FinancialPanel.tsx`). The other 9 analysis engines have API endpoints but no dashboard components:
-- Tax analysis panel
-- Investment projections panel
-- Condition / capex panel
-- Offer strategy panel
-- Stress test panel
-- HOA risk panel
-- Appraisal / comps panel
-- Insurance / risk panel
-- Surrounding area panel
+### TODO-002: Conflicts flagged in warnings
+**Priority:** High | **Status:** PARTIAL
+The resolver detects conflicts (e.g., sqft mismatch). The warning engine surfaces them.
+AI Pass 2 explains them in plain English. But the decision packet endpoint doesn't
+always include them — needs wiring from pipeline results to the /decision/packet API.
 
-**Where:** `frontend/src/components/analysis/` — need 9 more panel components. `frontend/src/app/properties/[id]/page.tsx` — wire into tabs.
+### TODO-003: Auto-alerts on county vs portal conflicts
+**Priority:** Medium | **Status:** OPEN
+When county enrichment runs, compare against existing portal evidence.
+Create AlertEvent for significant differences.
 
-### TODO-007: Decision packet not rendered in dashboard
-**Priority:** High
-**Status:** Open
-
-The 7-section decision packet (`GET /properties/{id}/decision/packet`) returns structured data but has no frontend rendering. This should be the primary view when looking at a property — "Should I pursue this?"
-
-**Where:** `frontend/src/components/decision/DecisionPacket.tsx` (doesn't exist). Should render all 7 sections: Quick Take, Price View, Monthly Cost, Hidden Cost, Community, Current Home Impact, Next Actions.
-
-### TODO-008: Due diligence items not in dashboard
-**Priority:** Medium
-**Status:** Open
-
-Due diligence items (checklist of things to verify/request) have API endpoints but no UI. Need a checklist component on the property detail page with add/update/resolve functionality.
-
-**Where:** `frontend/src/components/decision/DueDiligenceList.tsx` (doesn't exist).
-
-### TODO-009: No "Refresh" button for county/listing data
-**Priority:** Medium
-**Status:** Open
-
-APIs exist (`POST /properties/{id}/county/refresh`) but no dashboard button. User should be able to click "Refresh County Data" or "Re-scrape Listing" from the property detail page.
-
-**Where:** `frontend/src/app/properties/[id]/page.tsx` — add refresh buttons that call the APIs.
-
-### TODO-010: Price history chart not rendered
-**Priority:** Medium
-**Status:** Open
-
-Full price history is captured by Zillow GraphQL scraper (dates, prices, events) and stored in listing_page_snapshot.parsed_fields. Not rendered in any chart or timeline.
-
-**Where:** `frontend/src/components/analysis/PriceHistoryChart.tsx` (doesn't exist).
-
-### TODO-011: Comparison page is basic
-**Priority:** Low
-**Status:** Open
-
-The comparison page exists but only shows basic scoring. Needs side-by-side decision packets, monthly cost comparison, and "which one should I pursue?" recommendation.
-
-**Where:** `frontend/src/app/comparison/page.tsx`.
+### TODO-004: Listing ingest conflict check
+**Priority:** Medium | **Status:** OPEN
+When re-scraping Zillow, compare new data against existing evidence.
+Flag if price changed, sqft changed, status changed.
 
 ---
 
-## Scraping / Data Ingestion
+## Scrapers
 
-### TODO-012: Redfin and Realtor scrapers not tested on real sites
-**Priority:** High
-**Status:** Open
+### TODO-005: Redfin scraper tested on real site
+**Priority:** High | **Status:** OPEN
+Built with estimated selectors. Needs real-world testing.
 
-The Redfin and Realtor Playwright scrapers are built with estimated CSS selectors but have NOT been tested against real listing pages. Need real-world testing and selector adjustment.
+### TODO-006: Realtor.com scraper tested on real site
+**Priority:** Medium | **Status:** OPEN
+Same as Redfin — untested.
 
-**Where:** `src/pipa/clients/scrapers/redfin.py`, `src/pipa/clients/scrapers/realtor.py`.
+### TODO-007: Fairfax County scrapers tested
+**Priority:** Medium | **Status:** OPEN
+Fairfax iCare and PLUS scrapers built but untested.
+Only Loudoun County scrapers have been tested on live sites.
 
-### TODO-013: County scrapers not tested on real sites
-**Priority:** High
-**Status:** Open
+### TODO-008: Broker site scrapers (Coldwell Banker, Compass)
+**Priority:** Low | **Status:** OPEN
+Reliable Zillow fallback when CAPTCHA blocks. WebFetch confirmed working.
 
-Fairfax iCare, Fairfax PLUS, Loudoun parcel DB, and Loudoun LandMARC scrapers are built with estimated selectors. Need real-world testing.
-
-**Where:** `src/pipa/clients/scrapers/fairfax_icare.py`, `fairfax_plus.py`, `loudoun_parcel.py`, `loudoun_landmarc.py`.
-
-### TODO-014: County ArcGIS clients not tested against live endpoints
-**Priority:** High
-**Status:** Open
-
-Fairfax and Loudoun GIS clients have correct base URLs but layer IDs and field mappings are estimated. Need to test against actual MapServer endpoints.
-
-**Where:** `src/pipa/clients/arcgis/fairfax_gis.py`, `loudoun_gis.py`.
-
-### TODO-015: Zillow scraper CAPTCHA success rate needs monitoring
-**Priority:** Medium
-**Status:** Open
-
-Press-and-hold CAPTCHA bypass works but is not 100% reliable. Need to track success rate via `ScrapeRun` records and fall back to broker sites (Coldwell Banker, Compass, etc.) when Zillow blocks.
-
-**Where:** `src/pipa/clients/scrapers/zillow.py` — should record success/failure in `ScrapeRun` table. Fallback scraper chain not implemented.
-
-### TODO-016: Broker site scrapers not built
-**Priority:** Medium
-**Status:** Open
-
-Coldwell Banker, Compass, RE/MAX, Movoto show the same MLS data as Zillow/Redfin but without anti-bot measures. These would be reliable fallbacks when portal scraping fails. WebFetch from Coldwell Banker was confirmed working.
-
-**Where:** `src/pipa/clients/scrapers/` — need `coldwell_banker.py`, `compass.py`, etc.
+### TODO-009: Zillow CAPTCHA reliability
+**Priority:** Medium | **Status:** PARTIAL
+Press-and-hold bypass works ~70% of time with non-headless browser.
+Need ScrapeRun tracking to monitor success rate over time.
 
 ---
 
-## Enrichment Pipeline
+## Dashboard / SPA
 
-### TODO-017: Split county enrichment into QUICK vs DEEP
-**Priority:** Medium
-**Status:** Open
+### TODO-010: SPA views need real-world testing
+**Priority:** High | **Status:** PARTIAL
+SPA built with 36 JS files. Dashboard loads, property list works.
+Property detail needs thorough tab-by-tab testing.
+Known issues may exist in module imports and data binding.
 
-Currently county enrichment is one block. Should split into:
-- **QUICK** (runs immediately on ingest): parcel lookup, assessment, deed/sale history, zoning, flood basics
-- **DEEP** (runs on-demand for shortlisted): permits, plats, legal chain, GIS overlays, surrounding parcels, development cases
+### TODO-011: Pipeline polling for running tasks
+**Priority:** Medium | **Status:** OPEN
+Dashboard should poll every 3s while a pipeline is running.
+Currently requires manual page refresh to see results.
 
-**Where:** `src/pipa/services/county_service.py` — add `quick_enrich()` and `deep_enrich()` methods.
+### TODO-012: Toast notifications for action results
+**Priority:** Medium | **Status:** PARTIAL
+Toast system built (toast.js). Need to verify it fires on all actions.
 
-### TODO-018: Split surrounding analysis into LIGHT vs HEAVY
-**Priority:** Low
-**Status:** Open
-
-- **LIGHT**: adjacent parcels, nearest solds/listings, basic turnover/investor clues
-- **HEAVY**: deep permit patterns, stability model, development cases, builder cluster analysis
-
-Only run HEAVY on shortlisted homes.
-
-**Where:** `src/pipa/services/nearby_discovery.py`, `micro_market.py`.
-
-### TODO-019: HOA data is manual-only
-**Priority:** Medium
-**Status:** Open
-
-No automated HOA data source. User must manually enter dues/rules/reserve info or upload HOA docs for extraction. Could potentially scrape HOA management company sites or extract from listing remarks.
+### TODO-013: Add Property modal testing
+**Priority:** High | **Status:** OPEN
+Modal built but not tested with real Zillow URL ingest flow from SPA.
 
 ---
 
-## Analysis Engine Gaps
+## Analysis Engines
 
-### TODO-020: Appraisal comps not auto-sourced
-**Priority:** Medium
-**Status:** Open
+### TODO-014: Current home financials need real values
+**Priority:** High | **Status:** OPEN
+43629 White Cap Ter (user's current home) has placeholder values:
+purchase_price, estimated_value, remaining_mortgage all need real numbers.
+Sell-vs-rent analysis meaningless without them.
 
-Appraisal analysis requires manually-provided comparable sales. Should auto-source from:
-- Zillow GraphQL nearby sold data
-- RentCast comparable sales API
-- County deed records (nearby recent sales)
+### TODO-015: Auto-source comps from Zillow nearby sold
+**Priority:** Medium | **Status:** PARTIAL
+Quick comp runs but finds 0 candidates because Zillow GraphQL
+nearby_sold data isn't reliably captured (CAPTCHA interference).
 
-**Where:** `src/pipa/services/analysis_service.py` — before running appraisal, query available comp sources.
-
-### TODO-021: Neighborhood analysis not connected to real data
-**Priority:** Low
-**Status:** Open
-
-Neighborhood analysis (schools, crime, walkability, flood, demographics) has the analysis engine but no service to fetch real data from GreatSchools, FBI Crime, Walk Score, Census APIs and pass it through.
-
-**Where:** `src/pipa/services/analysis_service.py` — need service method that fetches from API clients and feeds the neighborhood analyzer.
-
-### TODO-022: Insurance analysis needs flood zone data
-**Priority:** Low
-**Status:** Open
-
-Insurance analysis works but flood zone data isn't being fetched from OpenFEMA or county GIS overlays. Currently returns "N/A" for flood insurance.
+### TODO-016: Neighborhood analysis not connected
+**Priority:** Low | **Status:** OPEN
+Neighborhood analysis engine exists but no service to fetch real data
+from GreatSchools, FBI Crime, Walk Score, Census APIs and pass it through.
 
 ---
 
-## Current Home Configuration
+## Data Quality
 
-### TODO-023: Current home financials need real values
-**Priority:** High
-**Status:** Open
+### TODO-017: Cross-reference all sources automatically
+**Priority:** Medium | **Status:** PARTIAL
+DataRefreshService.cross_reference_all() exists but needs testing.
+Should run after every county refresh.
 
-43629 White Cap Ter is configured in `config.yaml` but financial details are placeholder zeros:
-- purchase_price: 0 (user needs to provide)
-- estimated_value: 0
-- remaining_mortgage: 0
-- years_as_primary: 0
-- estimated_monthly_rent: 0
+### TODO-018: Document extraction via upload
+**Priority:** Low | **Status:** OPEN
+Document upload endpoint exists. Text extraction (PyMuPDF) exists.
+Not wired to the SPA upload UI.
 
-Sell-vs-rent analysis uses these values — results are meaningless until populated.
-
-**Where:** `config.example.yaml` and `src/pipa/core/config.py` CurrentHome class.
+### TODO-019: Comp sourcing from county neighborhood sales
+**Priority:** Medium | **Status:** OPEN
+Loudoun County "Neighborhood Sales" tab has 18-month sold data.
+Not being parsed into comp candidates yet.
 
 ---
 
 ## Infrastructure
 
-### TODO-024: Background workers not started by default
-**Priority:** Low
-**Status:** Open
+### TODO-020: Source health checker URLs fixed
+**Priority:** High | **Status:** DONE
+Fixed incorrect URLs for fairfax_gis, loudoun_parcel_db, loudoun_landmarc.
 
-APScheduler is wired into FastAPI lifespan but workers haven't been tested end-to-end. The scheduler uses a PID file lock for single-writer, but no verification that the scheduled jobs actually execute correctly.
+### TODO-021: Background workers need monitoring
+**Priority:** Low | **Status:** PARTIAL
+APScheduler runs 4 jobs (county_refresh, listing_monitor, alert_evaluator,
+source_health_checker). Basic functionality works but no monitoring UI.
 
-### TODO-025: No database backup/restore strategy
-**Priority:** Low
-**Status:** Open
+### TODO-022: Database backup strategy
+**Priority:** Low | **Status:** OPEN
+SQLite DB is single file. Need documented backup/restore procedure.
 
-SQLite DB is a single file. Need a backup script and documented restore procedure. Important because the DB accumulates scraped data, evidence items, and decision workflow state.
-
-### TODO-026: No SQLite → PostgreSQL migration tested
-**Priority:** Low
-**Status:** Open
-
-The plan calls for eventual PostgreSQL migration. All SQL goes through SQLAlchemy ORM, so it should be a connection string change + Alembic migration, but this hasn't been tested.
+### TODO-023: Settings persistence in SPA
+**Priority:** Medium | **Status:** PARTIAL
+AppSetting model + API created. SPA settings page built.
+Need to verify save/load works end-to-end.
 
 ---
 
-## Testing
+## Deferred
 
-### TODO-027: Integration tests for scraper → analysis → decision pipeline
-**Priority:** Medium
-**Status:** Open
+### TODO-024: PostgreSQL migration
+SQLAlchemy ORM makes this a connection string change. Not urgent for single-user.
 
-No end-to-end test that: ingests a listing URL → stores evidence → runs analysis → generates decision packet. Current tests cover individual units but not the full pipeline.
+### TODO-025: HTML/PDF report export
+Report generator exists. Need SPA button to trigger export.
 
-### TODO-028: No tests for conflict detection + reconciliation
-**Priority:** Medium
-**Status:** Open
+### TODO-026: Full test coverage
+99 tests passing but coverage is uneven. Need integration tests for
+scraper → pipeline → dashboard flow.
 
-`SourceReconciliationService` has no unit tests. Need tests for:
-- Two sources agree → no conflict
-- Two sources disagree → conflict flagged, highest rank wins
-- County overrides portal data
-- Missing source registry entry falls back to heuristic rank
-
-### TODO-029: Scraper tests need recorded responses (VCR)
-**Priority:** Low
-**Status:** Open
-
-Scraper tests should use recorded HTTP responses (via `respx` or `vcrpy`) so they don't hit real sites. Currently no scraper tests at all.
+### TODO-027: Fairfax County support
+Only Loudoun County scrapers tested. Fairfax iCare/PLUS need testing.
+Most properties in user's search area are Loudoun.
