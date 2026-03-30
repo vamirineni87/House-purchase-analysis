@@ -721,39 +721,6 @@ export default function PropertyDetailPage() {
 }
 
 // =====================================================================
-// Action Button
-// =====================================================================
-
-function ActionButton({
-  label,
-  onClick,
-  loading,
-  disabled,
-  variant = "primary",
-}: {
-  label: string;
-  onClick: () => void;
-  loading: boolean;
-  disabled: boolean;
-  variant?: "primary" | "secondary";
-}) {
-  const base =
-    variant === "primary"
-      ? "text-white bg-blue-600 hover:bg-blue-700"
-      : "text-gray-700 bg-gray-100 hover:bg-gray-200";
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`px-3 py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-50 ${base}`}
-    >
-      {loading ? "..." : label}
-    </button>
-  );
-}
-
-// =====================================================================
 // Tab 1: Summary
 // =====================================================================
 
@@ -956,15 +923,6 @@ function SummaryTab({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-3">
-      <div className="text-xs text-gray-500 mb-0.5">{label}</div>
-      <div className="text-sm font-semibold text-gray-900">{value}</div>
     </div>
   );
 }
