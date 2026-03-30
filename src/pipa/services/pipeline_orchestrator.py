@@ -36,7 +36,7 @@ FULL_PIPELINE_TASKS = [
     "offer",
     "stress",
     "warning_engine",
-    # "ai_pass_2",  # Disabled: spawns claude CLI which conflicts with active Claude Code session
+    "ai_pass_2",
     "decision_packet",
 ]
 
@@ -48,7 +48,7 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
     "refresh_zillow": ["zillow_scrape", "ai_pass_1", "resolver"],
     "refresh_county": ["county_scrape", "resolver"],
     "run_deep_comp": ["comp_deep"],
-    "rerun_ai": ["ai_pass_1"],  # ai_pass_2 disabled — conflicts with Claude Code session
+    "rerun_ai": ["ai_pass_1", "ai_pass_2"],
     "rerun_financials": ["financial", "tax", "condition", "offer", "stress"],
 }
 

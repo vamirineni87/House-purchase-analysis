@@ -1,0 +1,14 @@
+INFO:     Started server process [23456]
+INFO:     Waiting for application startup.
+2026-03-29 23:12:18 | INFO     | pipa.workers.scheduler | Registered 4 scheduled jobs: ['county_refresh', 'listing_monitor', 'alert_evaluator', 'source_health_check']
+2026-03-29 23:12:18 | INFO     | pipa.workers.scheduler | Background scheduler started (PID=23456)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:62277 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/run HTTP/1.1" 422 Unprocessable Content
+2026-03-29 23:13:16 | INFO     | pipa.services.pipeline_orchestrator | Loading Zillow data from DB for property 30848632-7d5a-4b21-b4a0-38d12f40a803
+2026-03-29 23:13:16 | INFO     | pipa.services.pipeline_orchestrator | Loaded 53 fields from ListingPageSnapshot
+2026-03-29 23:13:16 | INFO     | pipa.services.pipeline_orchestrator | Zillow scrape task: 53 fields available
+2026-03-29 23:13:16 | INFO     | pipa.services.pipeline_orchestrator | Loading county data from DB for property 30848632-7d5a-4b21-b4a0-38d12f40a803
+2026-03-29 23:13:16 | INFO     | pipa.services.pipeline_orchestrator | No stored county data found
+2026-03-29 23:13:16 | INFO     | pipa.services.pipeline_orchestrator | County scrape task: 0 fields available
+2026-03-29 23:13:24 | INFO     | pipa.services.pipeline_orchestrator | Resolver: year_built=2019, price=1367000, sqft=6045, beds=None, components=['component_roof_year', 'component_hvac_year', 'component_water_heater_year', 'component_electrical_panel_year', 'component_windows_year']
