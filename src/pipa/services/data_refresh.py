@@ -407,14 +407,71 @@ async def _refresh_county(
     db: AsyncSession,
     property_id: str,
 ) -> dict[str, Any]:
-    """Refresh county assessment/parcel data."""
-    from pipa.services.county_service import CountyService
+    """Re-scrape county assessment data from Loudoun County portal.
 
-    result = await CountyService.refresh_county_data(db, property_id)
-    total = result.assessments_fetched + result.permits_fetched + result.deeds_fetched
-    if result.errors:
-        return {"status": "error", "error": "; ".join(result.errors)}
-    return {"status": "refreshed", "fields_updated": total}
+    Uses the property's address to search the county assessment site
+    and extract all tabs (Profile, Values, Residential, Sales, Land, etc.)
+    """
+    from pipa.models.property import AddressHistory
+
+    # Get the property address
+    result = await db.execute(
+        select(AddressHistory)
+        .where(
+            AddressHistory.property_id == property_id,
+            AddressHistory.is_current == True,
+        )
+        .limit(1)
+    )
+    addr = result.scalar_one_or_none()
+    if not addr:
+        return {"status": "error", "error": "No address found for property"}
+
+    # Build search address from the normalized address
+    address_str = addr.normalized_address or addr.raw_address or ""
+    # Strip city/state/zip for the county scraper
+    parts = address_str.split(",")
+    street = parts[0].strip() if parts else address_str
+
+    county = addr.county or "loudoun"
+    logger.info("Re-scraping county data for %s (%s county)", street, county)
+
+    try:
+        if county == "loudoun":
+            from pipa.clients.scrapers.loudoun_parcel import LoudounParcelScraper
+
+            scraper = LoudounParcelScraper(headless=False)
+            try:
+                county_data = await scraper.scrape_by_address_string(street)
+            finally:
+                await scraper.close()
+
+            if county_data.get("_error"):
+                return {"status": "error", "error": county_data["_error"]}
+
+            # Store raw county data as SourceRecord
+            now = datetime.now(timezone.utc)
+            source_record = SourceRecord(
+                property_id=property_id,
+                source_name="loudoun_county",
+                source_url="https://reparcelasmt.loudoun.gov",
+                raw_payload=county_data,
+                fetched_at=now,
+            )
+            db.add(source_record)
+            await db.flush()
+
+            # Count fields extracted
+            summary = county_data.get("_summary", {})
+            fields = len([v for v in summary.values() if v is not None])
+            return {"status": "refreshed", "fields_updated": fields}
+        else:
+            # Fairfax or other — stub for now
+            return {"status": "not_implemented", "error": f"County scraper not implemented for {county}"}
+
+    except Exception as e:
+        logger.exception("County scrape failed for %s", street)
+        return {"status": "error", "error": str(e)[:200]}
 
 
 async def _refresh_hazard(
@@ -443,22 +500,42 @@ async def _refresh_listing(
     property_id: str,
     source: str,
 ) -> dict[str, Any]:
-    """Refresh listing data from Zillow or Redfin.
+    """Re-scrape listing data from Zillow or Redfin.
 
-    This is a placeholder — in production it would re-scrape
-    the listing URL stored in the most recent ListingPageSnapshot.
+    Finds the original listing URL from the most recent ListingPageSnapshot,
+    then re-scrapes it fresh (ignoring cached data).
     """
-    now = datetime.now(timezone.utc)
-    record = SourceRecord(
-        property_id=property_id,
-        source_name=f"{source}_listing",
-        source_url=f"scheduled_refresh:{source}",
-        fetched_at=now,
-        raw_payload={"status": "refresh_scheduled"},
+    from pipa.models.listing_page import ListingPageSnapshot
+
+    # Find the original URL to re-scrape
+    result = await db.execute(
+        select(ListingPageSnapshot)
+        .where(
+            ListingPageSnapshot.property_id == property_id,
+            ListingPageSnapshot.source_site == source,
+        )
+        .order_by(ListingPageSnapshot.scraped_at.desc())
+        .limit(1)
     )
-    db.add(record)
-    await db.flush()
-    return {"status": "scheduled", "fields_updated": 0}
+    existing_snap = result.scalar_one_or_none()
+
+    if not existing_snap or not existing_snap.listing_url:
+        return {"status": "error", "error": f"No {source} listing URL found to re-scrape"}
+
+    url = existing_snap.listing_url
+    logger.info("Re-scraping %s listing: %s", source, url)
+
+    try:
+        from pipa.services.listing_ingest import ListingIngestService
+
+        ingest = ListingIngestService(headless=False)
+        prop, snapshot = await ingest.ingest_from_url(db, url)
+
+        fields = len(snapshot.parsed_fields) if snapshot and snapshot.parsed_fields else 0
+        return {"status": "refreshed", "fields_updated": fields, "url": url}
+    except Exception as e:
+        logger.exception("Failed to re-scrape %s listing", source)
+        return {"status": "error", "error": str(e)[:200]}
 
 
 async def _refresh_stub(
