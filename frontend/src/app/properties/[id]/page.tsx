@@ -314,8 +314,9 @@ export default function PropertyDetailPage() {
     try {
       const result = await api.runCompsDeep(propertyId);
       setDeepComp(result);
-    } catch {
-      // silent
+    } catch (err) {
+      console.error("Deep comp failed:", err);
+      alert("Deep comp failed: " + (err instanceof Error ? err.message : "unknown error"));
     } finally {
       setActionLoading(null);
     }
@@ -625,12 +626,20 @@ export default function PropertyDetailPage() {
             deepComp={deepComp}
             propertyId={propertyId}
             onRunQuick={async () => {
-              const r = await api.runCompsQuick(propertyId);
-              setQuickComp(r);
+              try {
+                setActionLoading("quick_comp");
+                const r = await api.runCompsQuick(propertyId);
+                setQuickComp(r);
+              } catch (err) {
+                console.error("Quick comp failed:", err);
+                alert("Quick comp failed: " + (err instanceof Error ? err.message : "unknown error"));
+              } finally {
+                setActionLoading(null);
+              }
             }}
             onRunDeep={handleRunDeepComp}
             loading={
-              actionLoading === "deep_comp"
+              actionLoading === "deep_comp" || actionLoading === "quick_comp"
             }
           />
         )}
@@ -1084,9 +1093,9 @@ function CompsTab({
           <button
             onClick={onRunQuick}
             disabled={loading}
-            className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50"
+            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
           >
-            Run Quick Comp
+            {loading ? "Running..." : "Run Quick Comp"}
           </button>
         </div>
 
