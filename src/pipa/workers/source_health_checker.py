@@ -25,32 +25,32 @@ logger = logging.getLogger(__name__)
 # source_name -> { url, type, expected_status }
 SOURCE_PROBES: dict[str, dict] = {
     "fairfax_gis": {
-        "url": "https://gisrevprxy.fairfaxcounty.gov/GISData/rest/services",
+        "url": "https://www.fairfaxcounty.gov/euclid/rest/services/GIS/Property/MapServer?f=json",
         "type": "public_arcgis",
         "expected_status": 200,
     },
     "loudoun_gis": {
-        "url": "https://logis.loudoun.gov/arcgis/rest/services",
+        "url": "https://logis.loudoun.gov/arcgis/rest/services?f=json",
         "type": "public_arcgis",
         "expected_status": 200,
     },
     "fairfax_icare": {
-        "url": "https://icare.fairfaxcounty.gov/ffxcare/search/commonsearch.aspx?mode=address",
+        "url": "https://icare.fairfaxcounty.gov/",
         "type": "public_site_scrape",
         "expected_status": 200,
     },
     "fairfax_plus": {
-        "url": "https://plus.fairfaxcounty.gov/citizenaccess/",
+        "url": "https://plus.fairfaxcounty.gov/",
         "type": "public_site_scrape",
         "expected_status": 200,
     },
     "loudoun_parcel_db": {
-        "url": "https://parceldb.loudoun.gov/",
+        "url": "https://reparcelasmt.loudoun.gov/pt/search/commonsearch.aspx?mode=address",
         "type": "public_site_scrape",
         "expected_status": 200,
     },
     "loudoun_landmarc": {
-        "url": "https://va-loudoun.landsystems.com/",
+        "url": "https://www.loudoun.gov/5823/LandMARC-Land-Management-Applications-Re",
         "type": "public_site_scrape",
         "expected_status": 200,
     },
