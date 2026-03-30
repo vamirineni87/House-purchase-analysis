@@ -6,6 +6,7 @@ The dashboard can poll for status, see partial successes, and rerun individual t
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import traceback
@@ -35,7 +36,7 @@ FULL_PIPELINE_TASKS = [
     "offer",
     "stress",
     "warning_engine",
-    "ai_pass_2",
+    # "ai_pass_2",  # Disabled: spawns claude CLI which conflicts with active Claude Code session
     "decision_packet",
 ]
 
@@ -47,7 +48,7 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
     "refresh_zillow": ["zillow_scrape", "ai_pass_1", "resolver"],
     "refresh_county": ["county_scrape", "resolver"],
     "run_deep_comp": ["comp_deep"],
-    "rerun_ai": ["ai_pass_1", "ai_pass_2"],
+    "rerun_ai": ["ai_pass_1"],  # ai_pass_2 disabled — conflicts with Claude Code session
     "rerun_financials": ["financial", "tax", "condition", "offer", "stress"],
 }
 
@@ -669,16 +670,36 @@ async def _task_warning_engine(ctx: _ExecutionContext, db: AsyncSession) -> dict
 
 
 async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """AI PASS 2: interpretation and narrative."""
-    from pipa.services.ai_extraction import generate_property_summary
+    """AI PASS 2: interpretation and narrative.
 
-    summary = await generate_property_summary(
-        property_data=ctx.canonical,
-        county_data=ctx.county_data,
-        price_benchmarks=ctx.math_results.get("price_benchmarks"),
-    )
-    ctx.math_results["ai_interpretation"] = summary
-    return {"has_summary": bool(summary)}
+    Uses Claude CLI — may hang if another Claude session is active.
+    Times out after 30 seconds and skips gracefully.
+    """
+    import shutil
+
+    # Check if Claude CLI is available
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        logger.warning("AI Pass 2: Claude CLI not found, skipping")
+        return {"skipped": True, "reason": "claude CLI not found"}
+
+    try:
+        from pipa.services.ai_extraction import generate_property_summary
+
+        # Use a shorter timeout to avoid blocking the pipeline
+        summary = await asyncio.wait_for(
+            generate_property_summary(
+                property_data=ctx.canonical,
+                county_data=ctx.county_data,
+                price_benchmarks=ctx.math_results.get("price_benchmarks"),
+            ),
+            timeout=45,  # 45 second max — kill if hung
+        )
+        ctx.math_results["ai_interpretation"] = summary
+        return {"has_summary": bool(summary)}
+    except asyncio.TimeoutError:
+        logger.warning("AI Pass 2: Claude CLI timed out after 45s, skipping")
+        return {"skipped": True, "reason": "claude CLI timed out — may be competing with active session"}
 
 
 async def _task_decision_packet(ctx: _ExecutionContext, db: AsyncSession) -> dict:

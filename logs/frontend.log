@@ -661,3 +661,66 @@ Failed to proxy http://127.0.0.1:8000/api/v1/properties/30848632-7d5a-4b21-b4a0-
  GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 254ms
  ✓ Compiled in 860ms (828 modules)
  GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 175ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 339ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 153ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 134ms
+ ✓ Compiled in 1225ms (828 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 185ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 277ms
+Failed to proxy http://127.0.0.1:8000/api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/run [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 856ms (910 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 496ms
+ ○ Compiling /alerts ...
+ ✓ Compiled /alerts in 1378ms (835 modules)
+ GET /alerts 200 in 2107ms
+ ○ Compiling /settings ...
+ ✓ Compiled /settings in 692ms (842 modules)
+ GET /settings 200 in 1262ms
+ ○ Compiling /comparison ...
+ ✓ Compiled /comparison in 896ms (849 modules)
+ GET /comparison 200 in 1288ms
+ GET /properties 200 in 152ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 208ms
+ ✓ Compiled in 1609ms (837 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 269ms
+ ✓ Compiled in 1379ms (837 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 244ms
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 273ms
+Failed to proxy http://127.0.0.1:8000/api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 Error: connect ECONNREFUSED 127.0.0.1:8000
+    at <unknown> (Error: connect ECONNREFUSED 127.0.0.1:8000) {
+  errno: -4078,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 8000
+}
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at <unknown> (Error: connect ECONNREFUSED 127.0.0.1:8000) {
+  errno: -4078,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 8000
+}
+Failed to proxy http://127.0.0.1:8000/api/v1/watchlist Error: connect ECONNREFUSED 127.0.0.1:8000
+    at <unknown> (Error: connect ECONNREFUSED 127.0.0.1:8000) {
+  errno: -4078,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 8000
+}
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at <unknown> (Error: connect ECONNREFUSED 127.0.0.1:8000) {
+  errno: -4078,
+  code: 'ECONNREFUSED',
+  syscall: 'connect',
+  address: '127.0.0.1',
+  port: 8000
+}
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 917ms (933 modules)
+ GET /properties/30848632-7d5a-4b21-b4a0-38d12f40a803 200 in 204ms
+^C
