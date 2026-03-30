@@ -64,6 +64,47 @@ const STAGES: WatchlistStage[] = [
 ];
 
 // =====================================================================
+// Shared Components
+// =====================================================================
+
+function ActionButton({
+  label,
+  onClick,
+  loading = false,
+  disabled = false,
+  variant = "primary",
+}: {
+  label: string;
+  onClick: () => void;
+  loading?: boolean;
+  disabled?: boolean;
+  variant?: "primary" | "secondary";
+}) {
+  const base =
+    variant === "primary"
+      ? "bg-blue-600 text-white hover:bg-blue-700"
+      : "bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300";
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={`px-3 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-50 ${base}`}
+    >
+      {loading ? "Running..." : label}
+    </button>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="text-xs text-gray-500">{label}</div>
+      <div className="text-lg font-semibold text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+// =====================================================================
 // Helpers
 // =====================================================================
 
