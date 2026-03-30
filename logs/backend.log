@@ -632,3 +632,62 @@ INFO:     127.0.0.1:52930 - "GET /health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:52952 - "GET /health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:52962 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps/quick HTTP/1.1" 200 OK
 INFO:     127.0.0.1:52975 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53988 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53987 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53989 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64184 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57694 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49823 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59083 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49548 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49549 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49550 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52994 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61997 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56234 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50061 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57500 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/refresh/zillow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55233 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/refresh/zillow HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63097 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63096 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59761 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54253 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57907 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57451 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57452 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54759 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54758 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57036 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63801 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57182 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57183 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57187 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52500 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52501 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52502 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52404 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51732 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:51835 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59319 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/county HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53103 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54606 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps/quick HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52615 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps/quick HTTP/1.1" 200 OK
+2026-03-29 22:38:39 | INFO     | pipa.services.comp_service | Deep comp candidates: 0 sold (ranked), 0 active, 0 pending
+INFO:     127.0.0.1:59060 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps/deep HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49875 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49874 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49876 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56692 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54772 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53308 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:64470 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58305 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58306 - "GET /api/v1/watchlist HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58307 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/pipeline/runs?limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65011 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/listing-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55433 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/analysis-results HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51752 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:51197 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/decision/packet HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55035 - "GET /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55299 - "POST /api/v1/properties/30848632-7d5a-4b21-b4a0-38d12f40a803/comps/quick HTTP/1.1" 200 OK

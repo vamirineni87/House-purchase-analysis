@@ -1101,11 +1101,14 @@ function CompsTab({
 
         {quickComp ? (
           <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+              <div className="text-xs text-blue-700 font-medium">Quick Comp Results</div>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <MetricCard label="Confidence" value={quickComp.quick_confidence} />
-              <MetricCard label="Ask vs Comps" value={quickComp.asking_vs_comps} />
-              <MetricCard label="Sold Comps" value={String(quickComp.sold_count)} />
-              <MetricCard label="Active" value={String(quickComp.active_count)} />
+              <MetricCard label="Confidence" value={quickComp.quick_confidence || "unknown"} />
+              <MetricCard label="Ask vs Comps" value={quickComp.asking_vs_comps || "--"} />
+              <MetricCard label="Sold Comps" value={String(quickComp.sold_count ?? 0)} />
+              <MetricCard label="Active" value={String(quickComp.active_count ?? 0)} />
             </div>
 
             {quickComp.rough_value_band && (
