@@ -498,6 +498,17 @@ async def _task_resolver(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     ctx.canonical = canonical
     ctx.conflicts = conflicts
     ctx.unknowns = unknowns
+
+    # Log key canonical values for debugging
+    logger.info(
+        "Resolver: year_built=%s, price=%s, sqft=%s, beds=%s, components=%s",
+        canonical.get("year_built"),
+        canonical.get("asking_price"),
+        canonical.get("sqft_above_grade") or canonical.get("sqft_listing"),
+        canonical.get("bedrooms"),
+        [k for k in canonical if k.startswith("component_")],
+    )
+
     return {
         "canonical_fields": len(canonical),
         "conflicts": len(conflicts),
@@ -568,13 +579,31 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
             components.append({"component_type": mapped, "estimated_install_year": year})
 
     if not components:
+        logger.info("Condition: no components found. canonical keys with 'component': %s",
+                     [k for k in ctx.canonical if 'component' in k])
         return {"skipped": True, "reason": "no component data"}
 
     score = score_property_condition(components, current_year=current_year)
     capex = calculate_capex_forecast(components, current_year=current_year)
-    ctx.math_results["condition"] = {
+    condition_result = {
         "score": score, "capex_forecast": capex, "components": components,
     }
+    ctx.math_results["condition"] = condition_result
+
+    # Persist as AnalysisRun so frontend can retrieve it
+    from pipa.models.analysis_models import AnalysisRun
+    import hashlib, json
+    run = AnalysisRun(
+        property_id=ctx.property_id,
+        analysis_type="condition",
+        ruleset_version="1.0.0",
+        code_version="0.1.0",
+        input_snapshot_hash=hashlib.sha256(json.dumps(components, default=str).encode()).hexdigest(),
+        output_json=condition_result,
+    )
+    db.add(run)
+    await db.flush()
+
     return {"score": score, "components_evaluated": len(components)}
 
 

@@ -644,10 +644,7 @@ export default function PropertyDetailPage() {
           />
         )}
         {activeTab === "Condition" && (
-          <ConditionPanel
-            conditionResult={conditionResult}
-            components={components}
-          />
+          <ConditionTabWrapper propertyId={propertyId} />
         )}
         {activeTab === "County" && (
           <CountyTab
@@ -1959,6 +1956,109 @@ function NotesTab({
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// Condition Tab Wrapper — loads data from analysis-results
+// =====================================================================
+
+function ConditionTabWrapper({ propertyId }: { propertyId: string }) {
+  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .getAnalysisResults(propertyId)
+      .then((r) => {
+        const condition = r.analyses?.condition as Record<string, unknown> | undefined;
+        if (condition?.output) {
+          setData(condition.output as Record<string, unknown>);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [propertyId]);
+
+  if (loading) return <div className="text-sm text-gray-500">Loading condition data...</div>;
+
+  if (!data) {
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+        <p className="text-gray-500 text-sm mb-3">No condition data yet. Run the pipeline first.</p>
+        <p className="text-gray-400 text-xs">The pipeline will analyze roof, HVAC, water heater, electrical, and windows based on year built and any AI-extracted upgrade info.</p>
+      </div>
+    );
+  }
+
+  const score = data.score as number;
+  const capex = data.capex_forecast as Record<string, number> || {};
+  const components = (data.components as Array<Record<string, unknown>>) || [];
+
+  return (
+    <div className="space-y-6">
+      {/* Score */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Condition Score</h3>
+        <div className="flex items-center gap-4">
+          <div className={`text-3xl font-bold ${score >= 70 ? 'text-green-600' : score >= 40 ? 'text-amber-600' : 'text-red-600'}`}>
+            {score.toFixed(0)}/100
+          </div>
+          <div className="flex-1 bg-gray-200 rounded-full h-3">
+            <div
+              className={`h-3 rounded-full ${score >= 70 ? 'bg-green-500' : score >= 40 ? 'bg-amber-500' : 'bg-red-500'}`}
+              style={{ width: `${Math.min(score, 100)}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Components */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Components</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {components.map((comp, i) => {
+            const type = (comp.component_type as string) || "unknown";
+            const year = comp.estimated_install_year as number;
+            const age = year ? new Date().getFullYear() - year : null;
+            return (
+              <div key={i} className="bg-white border border-gray-200 rounded-lg p-3">
+                <div className="text-sm font-medium text-gray-900 capitalize">
+                  {type.replace(/_/g, " ")}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Installed: {year || "unknown"} {age !== null ? `(${age} years old)` : ""}
+                </div>
+                <div className="text-xs mt-1">
+                  <span className={`font-medium ${age && age > 15 ? 'text-red-600' : age && age > 10 ? 'text-amber-600' : 'text-green-600'}`}>
+                    {age && age > 15 ? "Replace soon" : age && age > 10 ? "Monitor" : "Good condition"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Capex Forecast */}
+      {Object.keys(capex).length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Capex Forecast</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {Object.entries(capex)
+              .sort(([a], [b]) => Number(a) - Number(b))
+              .map(([yr, cost]) => (
+                <div key={yr} className="bg-white border border-gray-200 rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500">Next {yr} yr</div>
+                  <div className={`text-lg font-bold ${cost > 10000 ? 'text-red-600' : cost > 0 ? 'text-amber-600' : 'text-green-600'}`}>
+                    {formatCurrency(cost)}
+                  </div>
+                </div>
+              ))}
+          </div>
         </div>
       )}
     </div>
