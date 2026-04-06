@@ -276,7 +276,7 @@ class CompService:
         # Convert EnrichedComp -> ComparableSale for appraisal engine
         comparable_sales: list[ComparableSale] = []
         for comp in enriched_comps:
-            comp_sqft = comp.sqft_above_grade or comp.total_sqft or 0
+            comp_sqft = comp.sqft_above_grade or comp.total_livable_sqft or 0
             comp_baths = (comp.full_baths or 0) + (comp.half_baths or 0) * 0.5
             sale_date = _parse_date(comp.sale_date)
             if sale_date is None:
@@ -309,10 +309,12 @@ class CompService:
         # Build adjustments summary (per-comp explanation)
         adjustments_summary: dict[str, Any] = {}
         for comp_result in (appraisal_result.comparables or []):
+            net_adj = sum(comp_result.adjustments.values()) if comp_result.adjustments else 0
+            net_pct = (net_adj / comp_result.sale_price * 100) if comp_result.sale_price else 0
             adjustments_summary[comp_result.address] = {
                 "adjustments": comp_result.adjustments,
                 "adjusted_price": comp_result.adjusted_price,
-                "net_adjustment_pct": comp_result.net_adjustment_pct,
+                "net_adjustment_pct": round(net_pct, 1),
             }
 
         # Value range from adjusted comps
@@ -451,6 +453,20 @@ class CompService:
             if school_info:
                 ai_market_ctx["subject_schools"] = school_info
 
+            # Load mortgage rate history (last 6 months = ~26 weekly observations)
+            rate_history = None
+            try:
+                from pipa.core.config import load_config
+                cfg = load_config()
+                fred_key = cfg.get("fred_api_key") or cfg.get("FRED_API_KEY")
+                if fred_key:
+                    from pipa.clients.fred import FREDClient
+                    fred = FREDClient(api_key=fred_key)
+                    rate_history = await fred.get_rate_history(term_years=30, limit=26)
+                    logger.debug("[enrich] Loaded %d rate observations", len(rate_history or []))
+            except Exception:
+                logger.debug("Could not load FRED rate history for AI comp")
+
             ai_interpretation = await interpret_comps(
                 subject=ai_subject,
                 comps=[c.model_dump() for c in enriched_comps],
@@ -458,6 +474,7 @@ class CompService:
                 condition_data=condition_info,
                 flood_data=flood_info,
                 financial_data=financial_info,
+                rate_history=rate_history,
             )
             logger.info("AI comp interpretation: confidence=%s", ai_interpretation.get("confidence"))
         except Exception:
@@ -513,13 +530,15 @@ class CompService:
             "comp_addresses": [c.address for c in enriched_comps],
             "type": "deep_comp",
         }
+        # Ensure result is JSON-serializable (date objects → strings)
+        json_safe_result = json.loads(json.dumps(result, default=str))
         run = AnalysisRun(
             property_id=property_id,
             analysis_type="deep_comp",
             ruleset_version="1.0.0",
             code_version=_CODE_VERSION,
             input_snapshot_hash=_input_hash(run_input),
-            output_json=result,
+            output_json=json_safe_result,
             computed_at=datetime.now(timezone.utc),
         )
         db.add(run)
@@ -905,56 +924,70 @@ class CompService:
     async def enrich_comp_from_county(
         db: AsyncSession,
         comp_address: str,
+        subject_property_id: str | None = None,
         scraper: LoudounParcelScraper | None = None,
         force_refresh: bool = False,
         ttl_hours: int = 168,  # 7 days — sold comp data doesn't change often
     ) -> dict:
         """Get county-verified details for a comp property.
 
-        Checks SourceRecord first — only scrapes if no cached data
-        exists or cached data is older than ttl_hours.
+        Checks SourceRecord cache first (by parcel ID or address match).
+        On fresh scrape, stores raw payload as SourceRecord for reuse.
 
         Returns dict with county-verified fields.
         """
         normed = _normalize_address(comp_address)
+        from datetime import timedelta
 
-        # --- Check cache: do we already have county data for this address? ---
+        logger.debug("[enrich] comp_address=%s normed=%s force_refresh=%s ttl=%dh subject_pid=%s",
+                     comp_address, normed, force_refresh, ttl_hours, subject_property_id)
+
+        # --- Check cache: do we already have county data for this comp? ---
         if not force_refresh:
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
 
+            # Search by comp_lookup_key (parcel ID or normalized address)
             cached_records = await db.execute(
                 select(SourceRecord).where(
-                    SourceRecord.source_name.in_(["loudoun_county", "loudoun_parcel", "county_comp_enrichment"]),
+                    SourceRecord.source_name == "county_comp_enrichment",
                 ).order_by(SourceRecord.fetched_at.desc())
             )
-            for record in cached_records.scalars().all():
+            all_cached = cached_records.scalars().all()
+            logger.debug("[enrich] county_comp_enrichment records found: %d", len(all_cached))
+            for record in all_cached:
                 payload = record.raw_payload or {}
-                # Check if this record is for the same address
-                cached_addr = payload.get("_search", {}).get("street_name", "")
-                cached_num = payload.get("_search", {}).get("house_number", "")
-                cached_full = f"{cached_num} {cached_addr}".strip().upper()
+                lookup_key = payload.get("_comp_lookup_key", "")
+                logger.debug("[enrich]   record id=%s lookup_key=%r fetched=%s",
+                             record.id[:12] if record.id else "?", lookup_key,
+                             record.fetched_at.isoformat() if record.fetched_at else "None")
 
-                # Also check the _summary address
+                if lookup_key and (lookup_key == normed or lookup_key == comp_address):
+                    if record.fetched_at and record.fetched_at >= cutoff:
+                        logger.info("Cache hit for comp %s (fetched %s)", comp_address, record.fetched_at.isoformat())
+                        return CompService._parse_all_county_tabs(payload, comp_address)
+                    else:
+                        logger.info("Stale cache for comp %s (fetched %s, ttl %dh)",
+                                    comp_address, record.fetched_at.isoformat(), ttl_hours)
+
+            # Also check subject property's county records (might already be scraped)
+            cached_county = await db.execute(
+                select(SourceRecord).where(
+                    SourceRecord.source_name.in_(["loudoun_county", "loudoun_parcel"]),
+                ).order_by(SourceRecord.fetched_at.desc()).limit(20)
+            )
+            for record in cached_county.scalars().all():
+                payload = record.raw_payload or {}
                 summary_addr = _normalize_address(
                     payload.get("_summary", {}).get("address", "")
                     or payload.get("Profile", {}).get("_key_values", {}).get("Primary Address", "")
                 )
-
-                if normed in cached_full or normed in summary_addr or cached_full in normed or summary_addr in normed:
+                if summary_addr and (normed in summary_addr or summary_addr in normed):
                     if record.fetched_at and record.fetched_at >= cutoff:
-                        logger.info(
-                            "Using cached county data for %s (fetched %s)",
-                            comp_address, record.fetched_at.isoformat(),
-                        )
-                        # Parse from cached payload — same as fresh scrape
-                        county_data = payload
-                        return CompService._parse_all_county_tabs(county_data, comp_address)
-                    else:
-                        logger.info(
-                            "Cached county data for %s is stale (fetched %s, ttl %dh)",
-                            comp_address, record.fetched_at.isoformat(), ttl_hours,
-                        )
+                        logger.info("Found comp %s in existing county record (fetched %s)",
+                                    comp_address, record.fetched_at.isoformat())
+                        return CompService._parse_all_county_tabs(payload, comp_address)
+
+            logger.debug("[enrich] No cache match for %s — will scrape", comp_address)
 
         # --- No cache or stale: scrape the county website ---
         owns_scraper = False
@@ -963,7 +996,7 @@ class CompService:
             owns_scraper = True
 
         try:
-            logger.info("Scraping county for %s (no cache or force_refresh)", comp_address)
+            logger.info("Scraping county for comp %s", comp_address)
             county_data = await scraper.scrape_by_address_string(comp_address)
 
             if county_data.get("_error"):
@@ -973,6 +1006,25 @@ class CompService:
                     county_data["_error"],
                 )
                 return {"_error": county_data["_error"], "address": comp_address}
+
+            # Store raw payload for reuse — keyed by comp address/parcel ID
+            county_data["_comp_lookup_key"] = normed
+            county_data["_comp_raw_address"] = comp_address
+            logger.debug("[enrich] Storing with lookup_key=%r property_id=%s", normed, subject_property_id)
+            now = datetime.now(timezone.utc)
+            try:
+                sr = SourceRecord(
+                    property_id=subject_property_id,
+                    source_name="county_comp_enrichment",
+                    source_url=county_data.get("_detail_url"),
+                    raw_payload=county_data,
+                    fetched_at=now,
+                )
+                db.add(sr)
+                await db.flush()
+                logger.info("Stored county data for comp %s (id=%s)", comp_address, sr.id[:12] if sr.id else "?")
+            except Exception as store_err:
+                logger.error("Failed to store comp data for %s: %s", comp_address, store_err)
 
             # Parse all tabs and return enriched data
             return CompService._parse_all_county_tabs(county_data, comp_address)
@@ -998,7 +1050,9 @@ class CompService:
         try:
             for candidate in candidates:
                 enriched = await CompService.enrich_comp_from_county(
-                    db, candidate.address, scraper=scraper
+                    db, candidate.address,
+                    subject_property_id=property_id,
+                    scraper=scraper,
                 )
 
                 if enriched.get("_error"):
@@ -1008,8 +1062,31 @@ class CompService:
                     )
                     continue
 
+                # Try Zillow scrape for extra details (HOA, description, price history)
+                zillow_data: dict = {}
+                comp_street = enriched.get("address") or ""
+                if comp_street and not comp_street.isdigit():
+                    try:
+                        from pipa.clients.scrapers.zillow import ZillowScraper
+                        zillow_scraper = ZillowScraper(headless=True)
+                        try:
+                            zillow_data = await zillow_scraper.scrape_by_address(
+                                comp_street, city="", state="VA"
+                            )
+                            if zillow_data.get("_error"):
+                                logger.debug("Zillow scrape failed for comp %s: %s",
+                                             comp_street, zillow_data.get("_error"))
+                                zillow_data = {}
+                            else:
+                                logger.info("Zillow enrichment for comp %s: %d fields",
+                                            comp_street, len(zillow_data))
+                        finally:
+                            await zillow_scraper.close()
+                    except Exception:
+                        logger.debug("Zillow enrichment failed for comp %s", comp_street)
+
                 # Detect sqft conflict
-                listing_sqft = candidate.sqft
+                listing_sqft = candidate.sqft or _safe_int(zillow_data.get("sqft") or zillow_data.get("livingArea"))
                 county_sqft = _safe_int(enriched.get("sqft_above_grade"))
                 sqft_conflict = False
                 if listing_sqft and county_sqft:
@@ -1041,7 +1118,7 @@ class CompService:
                     sale_price=sale_price,
                     sale_date=str(sale_date),
                     sqft_above_grade=county_sqft,
-                    total_sqft=_safe_int(enriched.get("total_sqft")),
+                    total_livable_sqft=_safe_int(enriched.get("total_livable_sqft")),
                     year_built=_safe_int(enriched.get("year_built")),
                     full_baths=_safe_int(enriched.get("full_baths")),
                     half_baths=_safe_int(enriched.get("half_baths")),
@@ -1056,6 +1133,12 @@ class CompService:
                     foundation=enriched.get("foundation"),
                     lot_acres=_safe_float(enriched.get("lot_acres")),
                     assessed_total=_safe_float(enriched.get("assessed_total")),
+                    hoa_monthly=_safe_float(zillow_data.get("hoa_monthly") or zillow_data.get("monthlyHoaFee")),
+                    zillow_description=(zillow_data.get("description") or zillow_data.get("homeDescription") or "")[:2000] or None,
+                    zillow_price_history=zillow_data.get("price_history") or zillow_data.get("priceHistory"),
+                    zillow_days_on_market=_safe_int(zillow_data.get("days_on_zillow") or zillow_data.get("daysOnZillow")),
+                    zillow_list_price=_safe_float(zillow_data.get("list_price") or zillow_data.get("price")),
+                    zillow_url=zillow_data.get("_url"),
                     zillow_sqft=listing_sqft,
                     county_sqft=county_sqft,
                     sqft_conflict=sqft_conflict,

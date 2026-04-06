@@ -65,19 +65,19 @@ function renderInputForm(state) {
     <div class="bg-ink-50 border border-ink-200 rounded p-3">
         <div class="flex flex-wrap gap-3 items-end">
             <div>
-                <label class="data-label block mb-0.5">List Price</label>
+                <label class="text-[11px] text-gray-500 uppercase tracking-wide block mb-0.5">List Price</label>
                 <input data-fin="list-price" type="number" value="${escapeHtml(String(defaultPrice))}"
                        placeholder="650000"
                        class="border border-ink-200 rounded px-2.5 py-1.5 text-sm font-mono w-36 bg-white focus:ring-1 focus:ring-gold-400 focus:border-gold-400" />
             </div>
             <div>
-                <label class="data-label block mb-0.5">HOA/mo</label>
+                <label class="text-[11px] text-gray-500 uppercase tracking-wide block mb-0.5">HOA/mo</label>
                 <input data-fin="hoa" type="number" value="${escapeHtml(String(defaultHOA))}"
                        placeholder="0"
                        class="border border-ink-200 rounded px-2.5 py-1.5 text-sm font-mono w-24 bg-white focus:ring-1 focus:ring-gold-400 focus:border-gold-400" />
             </div>
             <div>
-                <label class="data-label block mb-0.5">Rate %</label>
+                <label class="text-[11px] text-gray-500 uppercase tracking-wide block mb-0.5">Rate %</label>
                 <input data-fin="rate" type="number" step="0.01" value=""
                        placeholder="6.75"
                        class="border border-ink-200 rounded px-2.5 py-1.5 text-sm font-mono w-20 bg-white focus:ring-1 focus:ring-gold-400 focus:border-gold-400" />

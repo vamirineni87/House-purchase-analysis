@@ -41,14 +41,14 @@ export function headerExtra(_state) { return ''; }
  */
 function metricCell(label, value, source) {
     const sourceHint = source
-        ? `<span class="source-hint">${escapeHtml(source)}</span>`
+        ? `<span class="text-[10px] text-gray-300 ml-0.5 align-super">${escapeHtml(source)}</span>`
         : '';
     const safeVal = escapeHtml(value != null ? String(value) : '--');
     const dimmed = safeVal === '--' ? 'opacity-30' : '';
     return `
-    <div class="metric-cell">
-        <div class="data-label">${escapeHtml(label)}${sourceHint}</div>
-        <div class="data-value text-sm ${dimmed}">${safeVal}</div>
+    <div class="py-1">
+        <div class="text-[11px] text-gray-500 uppercase tracking-wide leading-tight">${escapeHtml(label)}${sourceHint}</div>
+        <div class="text-sm font-semibold text-gray-900 leading-snug ${dimmed}">${safeVal}</div>
     </div>`;
 }
 

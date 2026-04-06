@@ -166,13 +166,101 @@ class LoudounParcelScraper(BaseScraper):
         finally:
             await page.close()
 
+    async def scrape_by_parcel_id(
+        self, parcel_id: str, **kwargs
+    ) -> dict[str, Any]:
+        """Scrape property data by Loudoun County parcel ID.
+
+        The county site supports parcel search at mode=parid.
+        """
+        await self._ensure_browser()
+        await self._rate_limit_wait()
+
+        page = await self._context.new_page()
+        parid_url = "https://reparcelasmt.loudoun.gov/pt/search/commonsearch.aspx?mode=parid"
+        result: dict[str, Any] = {
+            "_source": "loudoun_county",
+            "_url": parid_url,
+            "_parser_version": PARSER_VERSION,
+            "_scraped_at": datetime.now(timezone.utc).isoformat(),
+            "_search": {"parcel_id": parcel_id},
+        }
+
+        try:
+            logger.info("Loudoun parcel search: %s", parcel_id)
+            await page.goto(parid_url, timeout=30000)
+            await page.wait_for_timeout(2000)
+
+            # Fill parcel ID into the search field
+            parid_input = await page.query_selector("#inpParid")
+            if not parid_input:
+                # Fallback: try common input IDs
+                parid_input = await page.query_selector("input[name*='parid' i]")
+            if not parid_input:
+                parid_input = await page.query_selector("input[type='text']")
+
+            if parid_input:
+                await parid_input.fill(parcel_id)
+            else:
+                result["_error"] = "parid_input_not_found"
+                return result
+
+            # Submit search
+            await page.evaluate("""
+                document.getElementById('hdAction').value = 'Search';
+                document.forms[0].submit();
+            """)
+            await page.wait_for_timeout(5000)
+
+            # Check if we landed on property detail or search results
+            current_url = page.url
+            if "Datalet" not in current_url:
+                result_links = await page.query_selector_all("a[href*='Datalet']")
+                if result_links:
+                    await result_links[0].click()
+                    await page.wait_for_timeout(3000)
+                elif "CommonSearch" in current_url:
+                    result["_error"] = "no_results"
+                    logger.warning("No results for parcel %s", parcel_id)
+                    return result
+
+            if "Datalet" not in page.url and "datalet" not in page.url:
+                result["_error"] = "navigation_failed"
+                return result
+
+            result["_detail_url"] = page.url
+
+            # Scrape tabs
+            tabs_to_scrape = kwargs.get("tabs") or TABS
+            for tab_name in tabs_to_scrape:
+                logger.debug("Scraping tab: %s", tab_name)
+                tab_data = await self._scrape_tab(page, tab_name)
+                result[tab_name] = tab_data
+
+            result["_summary"] = self._build_summary(result)
+            logger.info("Loudoun parcel scrape complete: %s — %d tabs", parcel_id, len(tabs_to_scrape))
+            return result
+
+        except Exception:
+            logger.exception("Failed to scrape parcel %s", parcel_id)
+            result["_error"] = "scrape_failed"
+            return result
+        finally:
+            await page.close()
+
     async def scrape_by_address_string(
         self, address: str, **kwargs
     ) -> dict[str, Any]:
         """Parse an address string and scrape.
 
         Accepts: "42580 Deer Isle Dr" or "42580 DEER ISLE DR"
+        Also handles parcel IDs (all-digit strings like "159255701000").
         """
+        cleaned = address.strip().replace(" ", "")
+        # Detect parcel IDs: 9+ digits, no letters
+        if cleaned.isdigit() and len(cleaned) >= 9:
+            return await self.scrape_by_parcel_id(cleaned, **kwargs)
+
         parts = address.strip().split()
         if len(parts) < 2:
             return {"_error": "invalid_address", "_input": address}

@@ -508,6 +508,7 @@ async def interpret_comps(
     condition_data: dict | None = None,
     flood_data: dict | None = None,
     financial_data: dict | None = None,
+    rate_history: list[dict] | None = None,
 ) -> dict:
     """AI interpretation of comparable sales vs subject property.
 
@@ -618,13 +619,48 @@ async def interpret_comps(
         if fin_parts:
             financial_text = "\n\nFinancial Context:\n" + "\n".join(f"  {p}" for p in fin_parts)
 
+    rate_text = ""
+    if rate_history:
+        rate_lines = [f"  {r['date']}: {r['value']*100:.2f}%" for r in rate_history[:26]]
+        current = rate_history[0]['value'] * 100 if rate_history else 0
+        six_mo_ago = rate_history[-1]['value'] * 100 if len(rate_history) >= 24 else rate_history[-1]['value'] * 100 if rate_history else 0
+        direction = "up" if current > six_mo_ago else "down" if current < six_mo_ago else "flat"
+        rate_text = (
+            f"\n\n30-Year Mortgage Rate History (weekly, last 6 months):\n"
+            f"  Current: {current:.2f}%, 6 months ago: {six_mo_ago:.2f}% (trending {direction})\n"
+            + "\n".join(rate_lines)
+            + "\n  NOTE: Rising rates reduce buyer purchasing power. A comp that sold at low rates "
+            "may have fetched a higher price than it would today. Adjust your value opinion accordingly."
+        )
+
+    # Compute market velocity metrics from comps
+    market_velocity = ""
+    if comps:
+        prices = [c.get("sale_price") or c.get("price") or 0 for c in comps if (c.get("sale_price") or c.get("price"))]
+        if prices:
+            from statistics import median
+            avg_price = sum(prices) / len(prices)
+            med_price = median(prices)
+            sqft_prices = []
+            for c in comps:
+                p = c.get("sale_price") or c.get("price") or 0
+                s = c.get("sqft_above_grade") or c.get("sqft") or 0
+                if p and s:
+                    sqft_prices.append(p / s)
+            ppsf = f", Median $/sqft: ${median(sqft_prices):,.0f}" if sqft_prices else ""
+            market_velocity = (
+                f"\n\nMarket Metrics from Comps:\n"
+                f"  Avg sale price: ${avg_price:,.0f}, Median: ${med_price:,.0f}{ppsf}\n"
+                f"  Comp count: {len(comps)} in last 6 months"
+            )
+
     prompt = (
         "You are a residential real estate appraiser analyzing comparable sales for a "
         "home purchase decision in Northern Virginia. The buyer is making a $1M+ decision "
         "and needs honest, precise analysis.\n\n"
         f"{subject_summary}\n\n"
         f"Comparable Sales:\n{comps_text}\n"
-        f"{market_text}{condition_text}{flood_text}{financial_text}\n\n"
+        f"{market_text}{condition_text}{flood_text}{financial_text}{rate_text}{market_velocity}\n\n"
         "Analyze these comps and respond in JSON with this exact structure:\n"
         "{\n"
         '  "ranked_comps": [\n'
@@ -658,6 +694,8 @@ async def interpret_comps(
         "- Whether the asking price is justified by the comp evidence\n"
         "- Any patterns the math might miss (price trends, neighborhood differences, condition gaps)\n"
         "- School zone differences — comps in different school boundaries may not be directly comparable\n"
+        "- Interest rate environment — comps sold at lower rates had more buyer purchasing power (higher prices)\n"
+        "- Seasonality — spring/summer sales typically 3-5% higher than winter\n"
         "- If data is missing for some comps, note the uncertainty\n"
         "Respond ONLY with the JSON, no other text."
     )

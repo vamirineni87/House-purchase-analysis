@@ -22,6 +22,9 @@ def setup_logging(level: str = "INFO"):
     root.setLevel(log_level)
     root.addHandler(handler)
 
+    # Debug comp service for cache troubleshooting
+    logging.getLogger("pipa.services.comp_service").setLevel(logging.DEBUG)
+
     # Quiet noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

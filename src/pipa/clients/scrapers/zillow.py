@@ -187,6 +187,30 @@ class ZillowScraper(BaseScraper):
         finally:
             await page.close()
 
+    async def scrape_by_address(
+        self,
+        street_address: str,
+        city: str = "",
+        state: str = "VA",
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Scrape a Zillow listing by street address (works for sold properties too).
+
+        Constructs a Zillow address search URL and follows through to the listing.
+        """
+        # Zillow address URL format: /homes/{address}-{city}-{state}_rb/
+        addr_slug = re.sub(r"[^a-zA-Z0-9]+", "-", street_address.strip()).strip("-")
+        city_slug = re.sub(r"[^a-zA-Z0-9]+", "-", city.strip()).strip("-") if city else ""
+        parts = [addr_slug]
+        if city_slug:
+            parts.append(city_slug)
+        parts.append(state.upper())
+        search_path = "-".join(parts)
+        url = f"https://www.zillow.com/homes/{search_path}_rb/"
+
+        logger.info("Zillow address search: %s → %s", street_address, url)
+        return await self.scrape_listing(url, **kwargs)
+
     # ==================================================================
     # CAPTCHA handling
     # ==================================================================

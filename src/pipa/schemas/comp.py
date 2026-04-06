@@ -82,6 +82,13 @@ class EnrichedComp(BaseModel):
     parcel_id: Optional[str] = None
     subdivision: Optional[str] = None
     builder: Optional[str] = None  # from seller in county sale records
+    # Zillow listing data (available for sold properties)
+    hoa_monthly: Optional[float] = None
+    zillow_description: Optional[str] = None  # listing agent remarks (appliances, upgrades, etc.)
+    zillow_price_history: Optional[list[dict]] = None  # [{date, event, price}]
+    zillow_days_on_market: Optional[int] = None
+    zillow_list_price: Optional[float] = None  # original list price (for sale-to-list ratio)
+    zillow_url: Optional[str] = None
     # Source tracking
     zillow_sqft: Optional[int] = None  # what listing site said (for conflict detection)
     county_sqft: Optional[int] = None  # what county says (above grade)

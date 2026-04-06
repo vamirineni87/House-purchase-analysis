@@ -24,9 +24,10 @@ export function getStateBadge(state) {
     const ld = state.listingData || {};
     const pv = state.packet?.price_view;
     const hasPrice = !!(ld.price || pv?.list_price);
-    const hasComps = !!state.quickComp;
+    const hasComps = !!(state.deepComp || state.quickComp);
 
-    if (hasPrice && hasComps) return { label: 'Complete', variant: 'success' };
+    if (hasPrice && state.deepComp) return { label: 'Complete', variant: 'success' };
+    if (hasPrice && hasComps) return { label: 'Partial', variant: 'warning' };
     if (hasPrice) return { label: 'Partial', variant: 'warning' };
     return { label: 'Not run', variant: 'not-run' };
 }
@@ -42,9 +43,15 @@ export function headerExtra(state) {
 // ── Render ─────────────────────────────────────────────────────────
 
 export function render(state) {
-    const { listingData, packet, quickComp } = state;
+    const { listingData, packet, quickComp, deepComp } = state;
     const ld = listingData || {};
     const pv = packet?.price_view;
+
+    // Prefer deep comp over quick comp when available
+    const bestComp = deepComp?.value_range?.mid ? deepComp : quickComp;
+    const bestValueBand = deepComp?.value_range?.mid ? deepComp.value_range : quickComp?.rough_value_band;
+    const bestConfidence = deepComp?.confidence || quickComp?.quick_confidence;
+    const bestAskVsComps = deepComp?.ai_interpretation?.asking_assessment || quickComp?.asking_vs_comps;
 
     const listPrice = ld.price || pv?.list_price || undefined;
     const zestimate = ld.zestimate || undefined;
@@ -54,7 +61,7 @@ export function render(state) {
         ? countyAssessments[0]?.total_value  // sorted newest first
         : undefined;
     const assessed = latestCountyAssessed || ld.tax_assessed_value || ld.tax_assessed || pv?.assessment_value || undefined;
-    const compEstimate = pv?.comp_estimate || quickComp?.rough_value_band?.mid || undefined;
+    const compEstimate = deepComp?.value_range?.mid || deepComp?.ai_interpretation?.value_opinion?.mid || pv?.comp_estimate || quickComp?.rough_value_band?.mid || undefined;
 
     const parts = [];
 
@@ -62,11 +69,12 @@ export function render(state) {
     parts.push(renderPriceBenchmarks(listPrice, zestimate, assessed, undefined, compEstimate));
 
     // ── Comp Value Band ───────────────────────────────────────────
-    if (quickComp?.rough_value_band) {
-        const vb = quickComp.rough_value_band;
+    if (bestValueBand) {
+        const vb = bestValueBand;
+        const source = deepComp?.value_range?.mid ? 'Deep Comp (County-Verified)' : 'Quick Comp';
         parts.push(`
         <div>
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Comp Value Band</div>
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Comp Value Band <span class="text-gray-300 normal-case font-normal">${source}</span></div>
             <div class="flex items-center gap-6 text-sm">
                 <div>
                     <span class="text-xs text-gray-400">Low</span>
@@ -84,19 +92,31 @@ export function render(state) {
         </div>`);
     }
 
+    // ── AI Value Opinion (deep comp) ─────────────────────────────
+    if (deepComp?.ai_interpretation?.value_opinion) {
+        const vo = deepComp.ai_interpretation.value_opinion;
+        if (vo.reasoning) {
+            parts.push(`
+            <div class="bg-blue-50 border border-blue-200 rounded p-2.5">
+                <div class="text-xs font-medium text-blue-800 mb-0.5">AI Value Opinion</div>
+                <p class="text-xs text-blue-700">${escapeHtml(vo.reasoning)}</p>
+            </div>`);
+        }
+    }
+
     // ── Ask vs Comps Assessment ───────────────────────────────────
-    if (quickComp?.asking_vs_comps) {
-        const assessment = quickComp.asking_vs_comps;
+    if (bestAskVsComps) {
+        const assessment = bestAskVsComps;
         let variant = 'muted';
         if (/below|under/i.test(assessment)) variant = 'success';
         else if (/above|over|high/i.test(assessment)) variant = 'critical';
-        else if (/fair|line|par/i.test(assessment)) variant = 'info';
+        else if (/fair|line|par|at/i.test(assessment)) variant = 'info';
 
         parts.push(`
         <div class="flex items-center gap-2">
             <span class="text-xs text-gray-500">Ask vs Comps:</span>
-            ${renderBadge(assessment, variant, 'sm')}
-            ${quickComp.quick_confidence ? `<span class="text-xs text-gray-400">(${escapeHtml(quickComp.quick_confidence)} confidence)</span>` : ''}
+            ${renderBadge(typeof assessment === 'string' && assessment.length > 20 ? assessment.slice(0, 50) + '…' : assessment, variant, 'sm')}
+            ${bestConfidence ? `<span class="text-xs text-gray-400">(${escapeHtml(bestConfidence)} confidence)</span>` : ''}
         </div>`);
     }
 

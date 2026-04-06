@@ -28,17 +28,20 @@ export function headerExtra(_state) { return ''; }
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function pursueVariant(rec) {
-    switch (rec) {
-        case 'pursue': return 'success';
-        case 'maybe':  return 'warning';
-        case 'pass':   return 'critical';
-        default:       return 'muted';
-    }
-}
+const PURSUE_CLASSES = {
+    pursue: 'bg-green-100 text-green-700',
+    maybe:  'bg-amber-100 text-amber-700',
+    pass:   'bg-red-100 text-red-700',
+};
 
-function pill(text, pillClass) {
-    return `<span class="${pillClass}">${escapeHtml(text)}</span>`;
+const PILL_CLASSES = {
+    feature:  'inline-block text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700',
+    flag:     'inline-block text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-700',
+    strength: 'inline-block text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700',
+};
+
+function pill(text, type) {
+    return `<span class="${PILL_CLASSES[type] || PILL_CLASSES.feature}">${escapeHtml(text)}</span>`;
 }
 
 // ── Render ─────────────────────────────────────────────────────────
@@ -61,7 +64,7 @@ export function render(state) {
     if (packet?.quick_take) {
         const qt = packet.quick_take;
         const rec = qt.recommendation || '';
-        const cls = rec === 'pursue' ? 'pursue-pursue' : rec === 'pass' ? 'pursue-pass' : 'pursue-maybe';
+        const cls = PURSUE_CLASSES[rec] || 'bg-gray-100 text-gray-500';
         const bullets = (qt.bullets || [])
             .map(b => `<li class="text-xs text-ink-600 leading-snug flex gap-1.5"><span class="text-ink-300 shrink-0">&mdash;</span><span>${escapeHtml(b)}</span></li>`)
             .join('');
@@ -69,8 +72,8 @@ export function render(state) {
         parts.push(`
         <div>
             <div class="flex items-center gap-2.5 mb-2">
-                <span class="data-label">Quick Take</span>
-                <span class="pursue-badge ${cls}">${rec}</span>
+                <span class="text-[11px] text-gray-500 uppercase tracking-wide">Quick Take</span>
+                <span class="inline-block text-[11px] font-bold uppercase px-2 py-0.5 rounded tracking-wide ${cls}">${rec}</span>
             </div>
             ${bullets ? `<ul class="space-y-0.5">${bullets}</ul>` : ''}
         </div>`);
@@ -82,7 +85,7 @@ export function render(state) {
     // Deduplicate: use upgrades first, fall back to community notes for features
     const features = upgrades.length > 0 ? upgrades : [];
     if (features.length > 0) {
-        const pills = features.map(f => pill(f, 'pill-feature')).join(' ');
+        const pills = features.map(f => pill(f, 'feature')).join(' ');
         parts.push(`
         <div>
             <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Features</div>
@@ -93,7 +96,7 @@ export function render(state) {
     // ── Red Flags (red pills) ─────────────────────────────────────
     const unknowns = packet?.hidden_cost?.unknowns || [];
     if (unknowns.length > 0) {
-        const pills = unknowns.map(u => pill(u, 'pill-flag')).join(' ');
+        const pills = unknowns.map(u => pill(u, 'flag')).join(' ');
         parts.push(`
         <div>
             <div class="text-xs font-semibold text-red-600 uppercase tracking-wide mb-1">Red Flags</div>
@@ -103,7 +106,7 @@ export function render(state) {
 
     // ── Strengths (green pills) ───────────────────────────────────
     if (communityNotes.length > 0) {
-        const pills = communityNotes.map(n => pill(n, 'pill-strength')).join(' ');
+        const pills = communityNotes.map(n => pill(n, 'strength')).join(' ');
         parts.push(`
         <div>
             <div class="text-xs font-semibold text-green-600 uppercase tracking-wide mb-1">Strengths</div>
@@ -123,9 +126,8 @@ export function render(state) {
     }
 
     // Missing data — only show if data is truly absent (not just loading)
-    const hasPacket = packet && packet.quick_take && packet.quick_take.recommendation;
-    const hasCounty = state.countyData && (state.countyData.summary && Object.keys(state.countyData.summary).length > 0 || (state.countyData.assessments && state.countyData.assessments.length > 0));
-    const hasComps = state.quickComp && (state.quickComp.filtered_comps?.length > 0 || state.quickComp.candidates?.length > 0);
+    const hasCounty = !!(state.countyData && Object.keys(state.countyData).length > 0);
+    const hasComps = !!(state.quickComp || state.deepComp);
 
     if (!latestRun) actions.push('Run pipeline to analyze this property');
     if (!ld.price) actions.push('No list price — add via Financial tab or re-scrape');

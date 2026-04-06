@@ -299,7 +299,7 @@ async function lazyLoadAll() {
     const loads = [
         api.getDecisionPacket(pid).then(d => {
             _state.packet = d;
-            rerenderSection('summary');
+            rerenderSection('summary-actions');
             rerenderSection('price-value');
         }).catch(() => {}),
 
@@ -308,7 +308,7 @@ async function lazyLoadAll() {
             if (_state.analysisResults.condition?.output) {
                 _state.conditionData = _state.analysisResults.condition.output;
             }
-            rerenderSection('summary');
+            rerenderSection('summary-actions');
             rerenderSection('condition');
             rerenderSection('financial');
             rerenderSection('pipeline-health');
@@ -317,7 +317,7 @@ async function lazyLoadAll() {
 
         api.getCountyData(pid).then(d => {
             _state.countyData = d;
-            rerenderSection('summary');
+            rerenderSection('summary-actions');
             rerenderSection('key-metrics');
             rerenderSection('price-value');
             rerenderSection('property-history');
@@ -333,7 +333,7 @@ async function lazyLoadAll() {
         api.getComps(pid).then(d => {
             if (d?.quick_comp) _state.quickComp = d.quick_comp;
             if (d?.deep_comp) _state.deepComp = d.deep_comp;
-            rerenderSection('summary');
+            rerenderSection('summary-actions');
             rerenderSection('price-value');
             rerenderSection('comps');
         }).catch(() => {}),
@@ -347,7 +347,7 @@ async function lazyLoadAll() {
             if (d?.lcps_schools) _state.lcpsSchools = d.lcps_schools;
             if (d?.cross_reference) _state.schoolCrossRef = d.cross_reference;
             rerenderSection('schools');
-            rerenderSection('summary');
+            rerenderSection('summary-actions');
         }).catch(() => {}),
 
         fetch(`/api/v1/properties/${pid}/flood-zone`).then(r => r.json()).then(d => {

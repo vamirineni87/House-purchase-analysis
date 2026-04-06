@@ -6,7 +6,7 @@
  */
 
 const SECTION_LABELS = [
-    { id: 'summary',          label: 'Summary' },
+    { id: 'summary-actions',   label: 'Summary' },
     { id: 'pipeline-health',  label: 'Health' },
     { id: 'price-value',      label: 'Value' },
     { id: 'key-metrics',      label: 'Metrics' },
