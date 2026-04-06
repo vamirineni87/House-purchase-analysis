@@ -578,6 +578,19 @@ async def interpret_comps(
             schools = market_context["subject_schools"]
             market_text += f"\n  Subject school assignments: {json.dumps(schools, default=str)[:500]}"
             market_text += "\n  NOTE: Comps in different school zones may not be directly comparable."
+        if market_context.get("market_indicators"):
+            mi = market_context["market_indicators"]
+            market_text += f"\n  Market type: {mi.get('market_type', 'unknown')} market"
+            if mi.get("months_of_supply"):
+                market_text += f"\n  Months of supply: {mi['months_of_supply']}"
+            if mi.get("median_dom"):
+                market_text += f"\n  Median DOM: {mi['median_dom']:.0f} days"
+            if mi.get("sale_to_list_avg"):
+                market_text += f"\n  Sale-to-list ratio: {mi['sale_to_list_avg']:.3f}"
+            if mi.get("price_trend"):
+                market_text += f"\n  Price trend: {mi['price_trend']}"
+            if mi.get("inventory_trend"):
+                market_text += f"\n  Inventory trend: {mi['inventory_trend']}"
 
     condition_text = ""
     if condition_data:

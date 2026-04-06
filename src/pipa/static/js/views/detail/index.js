@@ -356,6 +356,14 @@ async function lazyLoadAll() {
                 rerenderSection('key-metrics');
             }
         }).catch(() => {}),
+
+        fetch(`/api/v1/properties/${pid}/market`).then(r => r.json()).then(d => {
+            if (d?.indicators) {
+                _state.marketData = d;
+                rerenderSection('price-value');
+                rerenderSection('key-metrics');
+            }
+        }).catch(() => {}),
     ];
 
     await Promise.allSettled(loads);

@@ -120,6 +120,26 @@ export function render(state) {
         </div>`);
     }
 
+    // ── Market Indicators (Redfin) ─────────────────────────────────
+    const mi = state.marketData?.indicators;
+    if (mi && mi.market_type !== 'unknown') {
+        const mktColor = mi.market_type === 'seller' ? 'text-red-600' : mi.market_type === 'buyer' ? 'text-green-600' : 'text-blue-600';
+        const cells = [
+            `<div><span class="text-[11px] text-gray-500 uppercase">Market</span><div class="text-sm font-semibold ${mktColor}">${escapeHtml(mi.market_type)}</div></div>`,
+        ];
+        if (mi.months_of_supply != null) cells.push(`<div><span class="text-[11px] text-gray-500 uppercase">Months Supply</span><div class="text-sm font-semibold">${mi.months_of_supply}</div></div>`);
+        if (mi.median_dom != null) cells.push(`<div><span class="text-[11px] text-gray-500 uppercase">Median DOM</span><div class="text-sm font-semibold">${Math.round(mi.median_dom)} days</div></div>`);
+        if (mi.sale_to_list_avg != null) cells.push(`<div><span class="text-[11px] text-gray-500 uppercase">Sale/List</span><div class="text-sm font-semibold">${(mi.sale_to_list_avg * 100).toFixed(1)}%</div></div>`);
+        if (mi.price_trend) cells.push(`<div><span class="text-[11px] text-gray-500 uppercase">Price Trend</span><div class="text-sm font-semibold">${escapeHtml(mi.price_trend)}</div></div>`);
+        if (mi.inventory_trend) cells.push(`<div><span class="text-[11px] text-gray-500 uppercase">Inventory</span><div class="text-sm font-semibold">${escapeHtml(mi.inventory_trend)}</div></div>`);
+
+        parts.push(`
+        <div>
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Market Conditions <span class="text-gray-300 normal-case font-normal">ZIP ${state.marketData?.zip_code || ''} · Redfin</span></div>
+            <div class="grid grid-cols-3 sm:grid-cols-6 gap-3">${cells.join('')}</div>
+        </div>`);
+    }
+
     // ── Pricing Warnings ──────────────────────────────────────────
     const warnings = quickComp?.warnings || [];
     if (warnings.length > 0) {

@@ -445,6 +445,27 @@ class CompService:
             except Exception:
                 pass
 
+            # Load ZIP-level market data (Redfin)
+            market_indicators = None
+            try:
+                addr_result = await db.execute(
+                    select(AddressHistory).where(
+                        AddressHistory.property_id == property_id
+                    ).order_by(AddressHistory.created_at.desc()).limit(1)
+                )
+                addr_rec = addr_result.scalar_one_or_none()
+                if addr_rec and addr_rec.zip_code:
+                    from pipa.clients.redfin_data import RedfinDataClient
+                    redfin = RedfinDataClient()
+                    zip_metrics = await redfin.get_zip_metrics(addr_rec.zip_code[:5], months=6)
+                    if zip_metrics:
+                        market_indicators = redfin.compute_market_indicators(zip_metrics)
+                        logger.debug("[enrich] Market indicators: %s market, %.1f months supply",
+                                     market_indicators.get("market_type", "?"),
+                                     market_indicators.get("months_of_supply") or 0)
+            except Exception:
+                logger.debug("Could not load Redfin market data for AI comp")
+
             ai_market_ctx = {
                 "active_count": len(active_candidates),
                 "pending_count": len(pending_candidates),
@@ -452,6 +473,8 @@ class CompService:
             }
             if school_info:
                 ai_market_ctx["subject_schools"] = school_info
+            if market_indicators:
+                ai_market_ctx["market_indicators"] = market_indicators
 
             # Load mortgage rate history (last 6 months = ~26 weekly observations)
             rate_history = None
