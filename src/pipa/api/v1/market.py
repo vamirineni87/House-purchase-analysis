@@ -39,24 +39,41 @@ async def get_market_data(
 
     zip_code = addr.zip_code[:5]  # Normalize to 5-digit
 
-    from pipa.clients.redfin_data import RedfinDataClient
+    # Try PropData first (instant API, richer data)
+    propdata_snapshot = None
+    indicators = {}
+    try:
+        from pipa.core.config import load_config
+        cfg = load_config()
+        propdata_key = cfg.api_keys.propdata_api_key
+        if propdata_key:
+            from pipa.clients.propdata import PropDataClient
+            pd = PropDataClient(api_key=propdata_key)
+            propdata_snapshot = await pd.get_market_snapshot(zip_code)
+            if propdata_snapshot:
+                indicators = pd.extract_market_indicators(propdata_snapshot)
+            await pd.close()
+    except Exception:
+        pass
 
-    client = RedfinDataClient()
-    metrics = await client.get_zip_metrics(zip_code, months=months)
-
-    if not metrics:
-        # Try county-level fallback
-        county = addr.county or ""
-        if county:
-            metrics = await client.get_county_metrics(county, "Virginia", months)
-
-    indicators = client.compute_market_indicators(metrics) if metrics else {}
+    # Fallback to Redfin CSV if PropData unavailable
+    monthly_metrics = []
+    if not indicators:
+        from pipa.clients.redfin_data import RedfinDataClient
+        client = RedfinDataClient()
+        monthly_metrics = await client.get_zip_metrics(zip_code, months=months)
+        if not monthly_metrics:
+            county = addr.county or ""
+            if county:
+                monthly_metrics = await client.get_county_metrics(county, "Virginia", months)
+        indicators = client.compute_market_indicators(monthly_metrics) if monthly_metrics else {}
 
     return {
         "zip_code": zip_code,
         "county": addr.county,
-        "monthly_metrics": metrics,
+        "monthly_metrics": monthly_metrics,
         "indicators": indicators,
+        "snapshot": propdata_snapshot.get("snapshot") if propdata_snapshot else None,
     }
 
 

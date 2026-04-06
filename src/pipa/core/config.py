@@ -23,6 +23,7 @@ class ApiKeys(BaseSettings):
     api_ninjas_key: str = ""
     census_api_key: str = ""
     noaa_token: str = ""
+    propdata_api_key: str = ""
 
 
 class FinancialDefaults(BaseSettings):
@@ -167,8 +168,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     db_keys = _load_api_keys_from_db(config.database_url)
     if db_keys:
         for attr in ("fred_api_key", "rentcast_api_key", "greatschools_api_key",
-                      "walkscore_api_key", "api_ninjas_key", "census_api_key", "noaa_token"):
-            db_val = db_keys.get(attr, "")
+                      "walkscore_api_key", "api_ninjas_key", "census_api_key", "noaa_token",
+                      "propdata_api_key"):
+            # Check both lowercase and UPPERCASE DB keys
+            db_val = db_keys.get(attr, "") or db_keys.get(attr.upper(), "")
             if db_val and not getattr(config.api_keys, attr, ""):
                 setattr(config.api_keys, attr, db_val)
 
