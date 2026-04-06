@@ -29,7 +29,10 @@ export function renderSectionNav() {
     ).join('');
 
     return `<nav id="section-nav" class="bg-white border-b border-gray-200 px-6">
-  <div class="flex flex-wrap gap-0 -mb-px">${links}</div>
+  <div class="flex flex-wrap gap-0 -mb-px items-center">
+    ${links}
+    <button id="toggle-all-sections" class="ml-auto px-2 py-1.5 text-xs text-gray-400 hover:text-blue-600 whitespace-nowrap" title="Expand/Collapse All">Expand All</button>
+  </div>
 </nav>`;
 }
 
@@ -42,6 +45,21 @@ export function bindSectionNav(container, headerEl) {
 
     // Force layout recalculation so sticky kicks in immediately
     void nav.offsetHeight;
+
+    // Expand/Collapse All
+    const toggleAllBtn = nav.querySelector('#toggle-all-sections');
+    if (toggleAllBtn) {
+        toggleAllBtn.addEventListener('click', () => {
+            const bodies = container.querySelectorAll('[data-section-body]');
+            const anyHidden = Array.from(bodies).some(b => b.classList.contains('hidden'));
+            bodies.forEach(b => b.classList.toggle('hidden', !anyHidden));
+            // Update chevrons
+            container.querySelectorAll('[data-section-chevron]').forEach(c => {
+                c.classList.toggle('-rotate-90', !anyHidden);
+            });
+            toggleAllBtn.textContent = anyHidden ? 'Collapse All' : 'Expand All';
+        });
+    }
 
     const scrollContainer = container.closest('#app') || document.querySelector('#app');
     const links = nav.querySelectorAll('[data-section-link]');

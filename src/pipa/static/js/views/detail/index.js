@@ -343,6 +343,13 @@ async function lazyLoadAll() {
             rerenderSection('notes');
         }).catch(() => {}),
 
+        fetch(`/api/v1/properties/${pid}/schools`).then(r => r.json()).then(d => {
+            if (d?.lcps_schools) _state.lcpsSchools = d.lcps_schools;
+            if (d?.cross_reference) _state.schoolCrossRef = d.cross_reference;
+            rerenderSection('schools');
+            rerenderSection('summary');
+        }).catch(() => {}),
+
         fetch(`/api/v1/properties/${pid}/flood-zone`).then(r => r.json()).then(d => {
             if (!d.error) {
                 _state.floodZone = d;
@@ -373,9 +380,19 @@ async function handleAction(actionId, container) {
             showToast('Listing refreshed', 'success');
         },
         'action-refresh-county': async () => {
-            await api.refreshCountyData(_state.propertyId);
+            // Refresh county + schools in parallel
+            const [countyRes, schoolRes] = await Promise.allSettled([
+                api.refreshCountyData(_state.propertyId),
+                api.refreshSource(_state.propertyId, 'schools'),
+            ]);
             _state.countyData = await api.getCountyData(_state.propertyId);
-            showToast('County data refreshed', 'success');
+            // Reload school data
+            try {
+                const schoolData = await fetch(`/api/v1/properties/${_state.propertyId}/schools`).then(r => r.json());
+                if (schoolData?.lcps_schools) _state.lcpsSchools = schoolData.lcps_schools;
+                if (schoolData?.cross_reference) _state.schoolCrossRef = schoolData.cross_reference;
+            } catch { /* ignore */ }
+            showToast('County + schools refreshed', 'success');
         },
         'action-deep-comp': async () => {
             const result = await api.runCompsDeep(_state.propertyId);

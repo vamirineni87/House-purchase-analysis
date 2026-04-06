@@ -169,3 +169,72 @@ async def get_flood_zone(property_id: str, db: AsyncSession = Depends(get_db)):
     if not flood:
         return {"error": "FEMA flood zone lookup failed"}
     return flood
+
+
+@router.get("/properties/{property_id}/schools")
+async def get_schools(property_id: str, db: AsyncSession = Depends(get_db)):
+    """Get LCPS assigned schools + Zillow schools + cross-reference.
+
+    Returns LCPS official assignments (authoritative), Zillow nearby
+    schools (supplementary), and any discrepancies between them.
+    """
+    await _verify_property(db, property_id)
+
+    # Get LCPS school evidence
+    from pipa.models.source import EvidenceItem
+    lcps_result = await db.execute(
+        select(EvidenceItem).where(
+            EvidenceItem.property_id == property_id,
+            EvidenceItem.field_name.in_([
+                "school_elementary", "school_middle", "school_high",
+            ]),
+            EvidenceItem.confidence == "confirmed",
+        ).order_by(EvidenceItem.observed_at.desc())
+    )
+    lcps_items = lcps_result.scalars().all()
+
+    # Deduplicate by field_name (keep latest)
+    seen = {}
+    for item in lcps_items:
+        level = item.field_name.replace("school_", "")
+        if level not in seen:
+            seen[level] = item.field_value
+
+    lcps_schools = []
+    for level in ("elementary", "middle", "high"):
+        name = seen.get(level)
+        if name:
+            lcps_schools.append({"name": name, "level": level, "_source": "lcps"})
+
+    # Get Zillow schools from listing data
+    from pipa.models.listing_page import ListingPageSnapshot
+    snap_result = await db.execute(
+        select(ListingPageSnapshot).where(
+            ListingPageSnapshot.property_id == property_id,
+        ).order_by(ListingPageSnapshot.scraped_at.desc()).limit(1)
+    )
+    snap = snap_result.scalar_one_or_none()
+    zillow_schools = []
+    if snap and snap.parsed_fields:
+        raw = snap.parsed_fields.get("assigned_schools") or snap.parsed_fields.get("nearby_schools") or []
+        for s in raw:
+            s["_source"] = "zillow"
+            # Merge Zillow rating/distance into LCPS schools
+            for ls in lcps_schools:
+                if ls["level"] == (s.get("level") or "").lower():
+                    ls["rating"] = s.get("rating")
+                    ls["distance_mi"] = s.get("distance_mi") or s.get("distance")
+                    ls["grades"] = s.get("grades")
+                    ls["enrollment"] = s.get("enrollment")
+                    ls["student_teacher_ratio"] = s.get("student_teacher_ratio")
+        zillow_schools = raw
+
+    # Cross-reference
+    from pipa.services.school_service import SchoolService
+    xref = await SchoolService.cross_reference_zillow(db, property_id)
+
+    return {
+        "lcps_schools": lcps_schools if lcps_schools else zillow_schools,
+        "zillow_schools": zillow_schools,
+        "cross_reference": xref,
+    }

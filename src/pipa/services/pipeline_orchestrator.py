@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 FULL_PIPELINE_TASKS = [
     "zillow_scrape",
     "county_scrape",
+    "school_lookup",
     "ai_pass_1",
     "resolver",
     "financial",
@@ -816,8 +817,26 @@ async def _task_decision_packet(ctx: _ExecutionContext, db: AsyncSession) -> dic
 
 
 async def _task_school_lookup(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """School lookup — placeholder for future implementation."""
-    return {"skipped": True, "reason": "not yet implemented"}
+    """LCPS school boundary lookup and cross-reference with Zillow."""
+    from pipa.services.school_service import SchoolService
+
+    try:
+        data = await SchoolService.refresh(db, ctx.property_id, headless=False)
+        if data.get("_error"):
+            return {"skipped": True, "reason": data["_error"]}
+
+        # Cross-reference against Zillow
+        xref = await SchoolService.cross_reference_zillow(db, ctx.property_id)
+
+        schools_found = sum(1 for k in ("elementary", "middle", "high") if data.get(k))
+        return {
+            "schools_found": schools_found,
+            "mismatches": len(xref.get("mismatches", [])),
+            "boundary_change": xref.get("boundary_change_warning", False),
+        }
+    except Exception as e:
+        logger.exception("School lookup failed")
+        return {"skipped": True, "reason": str(e)[:200]}
 
 
 async def _task_comp_quick(ctx: _ExecutionContext, db: AsyncSession) -> dict:
