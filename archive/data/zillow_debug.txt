@@ -1,0 +1,15 @@
+
+=== bedrooms at 76626 ===
+="5"><meta property="zillow_fb:description" content="This 6045 square feet Single Family home has 6 bedrooms and 5 bathrooms. It is located at 42580 Deer Isle Dr, Chantilly, VA."><meta property="og:title" content="42580 Deer Isle Dr, Chantilly, VA 20152 | MLS #VALO2117592 | Zillow"><meta property="o
+
+=== bathrooms at 76641 ===
+erty="zillow_fb:description" content="This 6045 square feet Single Family home has 6 bedrooms and 5 bathrooms. It is located at 42580 Deer Isle Dr, Chantilly, VA."><meta property="og:title" content="42580 Deer Isle Dr, Chantilly, VA 20152 | MLS #VALO2117592 | Zillow"><meta property="og:url" content=
+
+=== yearBuilt at 2477633 ===
+"bedrooms\":6,\"homeType\":\"SingleFamily\",\"lotSize\":\"0.46 Acres\",\"pricePerSquareFoot\":226,\"yearBuilt\":2019,\"propertySubType\":[\"Single Family Residence\"],\"carportParkingCapacity\":null,\"coveredParkingCapacity\":2,\"garageParkingCapacity\":2,\"hasAttachedGarage\":true,\"hasCarport\":fa
+
+=== livingArea at 2476690 ===
+":false,\"isBankOwned\":false,\"isForAuction\":false,\"isOpenHouse\":true,\"isComingSoon\":false},\"livingAreaValue\":6045,\"price\":1367000,\"listingAccountUserId\":\"X1-ZU10cdl67ff5o95_9zlkl\",\"isUndisclosedAddress\":false,\"address\":{\"streetAddress\":\"42580 Deer Isle Dr\",\"zipcode\":\"20152\
+
+=== zestimate at 1439645 ===
+dEhQoC"><div><button data-testid="primary-title" type="button" aria-expanded="false" id="ds-primary-zestimate-tooltip" aria-haspopup="dialog" class="TriggerText-c11n-8-112-0__sc-d96jze-0 ggLflU"><p class="Text-c11n-8-112-0__sc-aiai24-0 fXfDch">Zestimate<sup>®</sup></p></button><div class="Spacer-c11
