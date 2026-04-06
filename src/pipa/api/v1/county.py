@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pipa.core.dependencies import get_db
 from pipa.models.property import Property
+from pipa.models.source import SourceRecord
 from pipa.schemas.county import (
     AssessmentResponse,
     CountyRefreshResult,
