@@ -576,23 +576,47 @@ async def _task_resolver(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 
 
 async def _task_financial(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """Financial analysis on canonical data."""
+    """Financial analysis on canonical data.
+
+    Fetches live mortgage rates from FRED if API key is configured,
+    otherwise falls back to config defaults.
+    """
     from pipa.analysis.financial import run_financial_analysis
+    from pipa.core.dependencies import get_config
 
     price = _to_float(ctx.canonical.get("asking_price"))
     if not price:
         logger.info("Financial: no asking_price in canonical. Keys: %s", list(ctx.canonical.keys())[:15])
         return {"skipped": True, "reason": "no asking price in canonical data"}
 
+    config = get_config()
     hoa = _to_float(ctx.canonical.get("hoa_monthly")) or 0
+
+    # Try live FRED rates
+    rate_override = None
+    fred_key = config.api_keys.fred_api_key
+    if fred_key:
+        try:
+            from pipa.clients.fred import FREDClient
+            fred = FREDClient(api_key=fred_key)
+            live_rate = await fred.get_current_rate(30)
+            await fred.close()
+            if live_rate:
+                rate_override = live_rate
+                logger.info("Financial: using live FRED 30yr rate: %.2f%%", live_rate * 100)
+        except Exception:
+            logger.warning("Financial: FRED rate fetch failed, using defaults")
+
     result = run_financial_analysis(
         list_price=price, hoa_monthly=hoa,
         down_payment_pcts=[0.10, 0.20],
         term_years=[15, 30],
+        rate_override=rate_override,
         property_tax_rate=0.00875,
     )
     ctx.math_results["financial"] = result.model_dump()
-    return {"scenarios": len(result.model_dump().get("payment_breakdowns", {}))}
+    await _persist_analysis(db, ctx.property_id, "financial", result.model_dump())
+    return {"scenarios": len(result.model_dump().get("payment_breakdowns", {})), "rate_used": rate_override or "default"}
 
 
 async def _task_tax(ctx: _ExecutionContext, db: AsyncSession) -> dict:

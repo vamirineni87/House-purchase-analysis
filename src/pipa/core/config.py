@@ -111,8 +111,34 @@ class AppConfig(BaseSettings):
     scrapers: ScraperConfig = Field(default_factory=ScraperConfig)
 
 
+def _load_api_keys_from_db(db_url: str) -> dict[str, str]:
+    """Read API keys from app_setting table (sync, at startup)."""
+    import json
+    import sqlite3
+
+    # Extract file path from SQLAlchemy URL
+    path = db_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
+    if not Path(path).exists():
+        return {}
+
+    try:
+        conn = sqlite3.connect(path)
+        c = conn.cursor()
+        c.execute("SELECT key, value_json FROM app_setting WHERE category = 'api_keys'")
+        keys = {}
+        for key, value_json in c.fetchall():
+            try:
+                keys[key] = json.loads(value_json)
+            except (json.JSONDecodeError, TypeError):
+                keys[key] = value_json
+        conn.close()
+        return keys
+    except Exception:
+        return {}
+
+
 def load_config(config_path: Path | None = None) -> AppConfig:
-    """Load config from .env + optional YAML file."""
+    """Load config from .env + optional YAML file + DB app_setting."""
     yaml_data: dict[str, Any] = {}
 
     if config_path and config_path.exists():
@@ -136,6 +162,15 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         config.counties = {k: CountyConfig(**v) for k, v in yaml_data["counties"].items()}
     if "scrapers" in yaml_data:
         config.scrapers = ScraperConfig(**yaml_data["scrapers"])
+
+    # Load API keys from DB (app_setting table, set via Settings UI)
+    db_keys = _load_api_keys_from_db(config.database_url)
+    if db_keys:
+        for attr in ("fred_api_key", "rentcast_api_key", "greatschools_api_key",
+                      "walkscore_api_key", "api_ninjas_key", "census_api_key", "noaa_token"):
+            db_val = db_keys.get(attr, "")
+            if db_val and not getattr(config.api_keys, attr, ""):
+                setattr(config.api_keys, attr, db_val)
 
     # Ensure storage dirs exist
     config.storage_dir.mkdir(parents=True, exist_ok=True)
