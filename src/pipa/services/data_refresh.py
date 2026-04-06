@@ -461,8 +461,10 @@ async def _refresh_county(
             db.add(source_record)
             await db.flush()
 
-            # Count fields extracted
+            # Parse raw data into structured tables
             summary = county_data.get("_summary", {})
+            await _parse_county_into_tables(db, property_id, county_data, summary, now)
+
             fields = len([v for v in summary.values() if v is not None])
             return {"status": "refreshed", "fields_updated": fields}
         else:
@@ -472,6 +474,185 @@ async def _refresh_county(
     except Exception as e:
         logger.exception("County scrape failed for %s", street)
         return {"status": "error", "error": str(e)[:200]}
+
+
+async def _parse_county_into_tables(
+    db: AsyncSession,
+    property_id: str,
+    county_data: dict,
+    summary: dict,
+    now: datetime,
+) -> None:
+    """Parse raw county scrape data into structured assessment/deed/component tables."""
+    import re
+    from pipa.models.assessment import AssessmentSnapshot
+    from pipa.models.component import ComponentSystem
+    from pipa.models.deed import DeedRecord
+
+    def _parse_currency(val: Any) -> float | None:
+        if val is None:
+            return None
+        cleaned = re.sub(r"[^\d.]", "", str(val))
+        try:
+            return float(cleaned) if cleaned else None
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_int(val: Any) -> int | None:
+        if val is None:
+            return None
+        cleaned = re.sub(r"[^\d]", "", str(val))
+        try:
+            return int(cleaned) if cleaned else None
+        except (ValueError, TypeError):
+            return None
+
+    # --- Assessments: parse ALL years from _values_rows ---
+    values_rows = summary.get("_values_rows", [])
+    i = 0
+    while i < len(values_rows):
+        row = values_rows[i]
+        # Look for "YYYY Values" header
+        if isinstance(row, list) and len(row) == 1:
+            year_match = re.match(r"(\d{4})\s+Values", str(row[0]))
+            if year_match:
+                year = int(year_match.group(1))
+                # For current year (first entry), values are on separate rows
+                if year == now.year:
+                    # Scan next rows for Fair Market Land/Building/Total
+                    land = None
+                    building = None
+                    total = None
+                    for j in range(i + 1, min(i + 20, len(values_rows))):
+                        r = values_rows[j]
+                        if isinstance(r, list) and len(r) >= 2:
+                            label = str(r[0]).strip()
+                            if label == "Fair Market Land":
+                                land = _parse_currency(r[1])
+                            elif label == "Fair Market Building":
+                                building = _parse_currency(r[1])
+                            elif label == "Fair Market Total":
+                                total = _parse_currency(r[1])
+                        # Stop at next year
+                        if isinstance(r, list) and len(r) == 1 and re.match(r"\d{4}\s+Values", str(r[0])):
+                            break
+                    if total is not None:
+                        db.add(AssessmentSnapshot(
+                            property_id=property_id,
+                            tax_year=year,
+                            land_value=land or 0.0,
+                            improvement_value=building or 0.0,
+                            total_value=total,
+                            snapshot_date=now,
+                        ))
+                else:
+                    # Historical years: header row, then Notice row with values
+                    # Format: [type, land, building, ..., total, ..., taxable]
+                    for j in range(i + 1, min(i + 4, len(values_rows))):
+                        r = values_rows[j]
+                        if isinstance(r, list) and len(r) >= 4 and str(r[0]).strip() == "Notice":
+                            land = _parse_currency(r[1])
+                            building = _parse_currency(r[2])
+                            # Total is typically r[3] or later — find the largest value
+                            total = _parse_currency(r[3])
+                            # Taxable is the last value
+                            taxable = _parse_currency(r[-1]) if len(r) > 4 else total
+                            if total is not None:
+                                db.add(AssessmentSnapshot(
+                                    property_id=property_id,
+                                    tax_year=year,
+                                    land_value=land or 0.0,
+                                    improvement_value=building or 0.0,
+                                    total_value=total,
+                                    snapshot_date=now,
+                                ))
+                            break
+        i += 1
+
+    # --- Tax history from summary ---
+    tax_history = summary.get("tax_history", [])
+    for th in tax_history:
+        yr = _parse_int(th.get("tax_year"))
+        amt = _parse_currency(th.get("amount"))
+        if yr and amt:
+            # Update existing assessment with tax amount if exists
+            # Otherwise create a tax-only record
+            db.add(AssessmentSnapshot(
+                property_id=property_id,
+                tax_year=yr,
+                land_value=0.0,
+                improvement_value=0.0,
+                total_value=0.0,
+                annual_tax=amt,
+                snapshot_date=now,
+            ))
+
+    # --- Deeds ---
+    sale_price = _parse_currency(summary.get("sale_price"))
+    sale_date_str = summary.get("sale_date")
+    if sale_price is not None or sale_date_str:
+        sale_date = None
+        if sale_date_str:
+            for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
+                try:
+                    sale_date = datetime.strptime(sale_date_str.strip(), fmt)
+                    break
+                except (ValueError, TypeError):
+                    pass
+        db.add(DeedRecord(
+            property_id=property_id,
+            grantor=summary.get("seller"),
+            grantee=summary.get("buyer"),
+            sale_price=sale_price,
+            sale_date=sale_date,
+            instrument_number=summary.get("deed_instrument"),
+        ))
+
+    # Also parse Sales/Transfers tab rows
+    sales_tab = county_data.get("Sales / Transfers", {})
+    sales_rows = sales_tab.get("_rows", [])
+    for row in sales_rows:
+        if len(row) >= 3 and "/" in str(row[0]):
+            price = _parse_currency(row[1] if len(row) > 1 else None)
+            if price and price > 0:
+                sd = None
+                for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
+                    try:
+                        sd = datetime.strptime(str(row[0]).strip(), fmt)
+                        break
+                    except (ValueError, TypeError):
+                        pass
+                db.add(DeedRecord(
+                    property_id=property_id,
+                    grantee=row[2] if len(row) > 2 else None,
+                    sale_price=price,
+                    sale_date=sd,
+                ))
+
+    # --- Components (for condition analysis) ---
+    year_built = _parse_int(summary.get("year_built"))
+    if year_built:
+        component_types = {
+            "roof": {"expected_life": 25},
+            "hvac": {"expected_life": 15},
+            "water_heater": {"expected_life": 12},
+            "windows": {"expected_life": 30},
+            "electrical_panel": {"expected_life": 40},
+            "exterior_siding": {"expected_life": 30},
+            "appliances": {"expected_life": 15},
+        }
+        for comp_type, meta in component_types.items():
+            db.add(ComponentSystem(
+                property_id=property_id,
+                component_type=comp_type,
+                estimated_install_year=year_built,
+                expected_lifespan=meta["expected_life"],
+                confidence="estimated",
+            ))
+        logger.info("Created %d component records from year_built=%d", len(component_types), year_built)
+
+    await db.flush()
+    logger.info("Parsed county data into tables for property %s", property_id)
 
 
 async def _refresh_hazard(
