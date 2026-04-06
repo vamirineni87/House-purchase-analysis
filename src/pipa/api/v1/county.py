@@ -127,3 +127,45 @@ async def get_deeds(
     """Get all deed records for a property."""
     await _verify_property(db, property_id)
     return await CountyService.get_deeds(db, property_id)
+
+
+@router.get("/properties/{property_id}/flood-zone")
+async def get_flood_zone(property_id: str, db: AsyncSession = Depends(get_db)):
+    """Get FEMA flood zone designation for a property.
+
+    Queries the FEMA National Flood Hazard Layer using the property's
+    lat/lng coordinates. No API key needed.
+    """
+    from pipa.models.property import AddressHistory
+
+    await _verify_property(db, property_id)
+
+    # Get coordinates
+    result = await db.execute(
+        select(AddressHistory).where(
+            AddressHistory.property_id == property_id,
+            AddressHistory.is_current == True,
+        ).limit(1)
+    )
+    addr = result.scalar_one_or_none()
+    if not addr or not addr.latitude or not addr.longitude:
+        # Try listing data for coordinates
+        from pipa.models.listing_page import ListingPageSnapshot
+        snap_result = await db.execute(
+            select(ListingPageSnapshot).where(
+                ListingPageSnapshot.property_id == property_id,
+            ).order_by(ListingPageSnapshot.scraped_at.desc()).limit(1)
+        )
+        snap = snap_result.scalar_one_or_none()
+        lat = snap.parsed_fields.get("latitude") if snap and snap.parsed_fields else None
+        lng = snap.parsed_fields.get("longitude") if snap and snap.parsed_fields else None
+        if not lat or not lng:
+            return {"error": "No coordinates available for property"}
+    else:
+        lat, lng = addr.latitude, addr.longitude
+
+    from pipa.clients.fema_flood import lookup_flood_zone
+    flood = await lookup_flood_zone(float(lat), float(lng))
+    if not flood:
+        return {"error": "FEMA flood zone lookup failed"}
+    return flood

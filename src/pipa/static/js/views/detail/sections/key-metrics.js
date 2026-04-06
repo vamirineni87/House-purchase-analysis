@@ -188,6 +188,18 @@ export function render(state) {
     cells.push(metricCell('Condition', county.condition || '--', 'C'));
     cells.push(metricCell('Grade', county.grade || '--', 'C'));
 
+    // ── Flood Zone (FEMA) ───────────────────────────────────────
+    const flood = state.floodZone;
+    if (flood) {
+        const riskColor = flood.risk === 'high' ? 'text-red-600 font-bold'
+            : flood.risk === 'moderate' ? 'text-amber-600 font-semibold'
+            : '';
+        const zoneDisplay = `${flood.flood_zone}${flood.zone_subtype ? ' — ' + flood.zone_subtype : ''}`;
+        cells.push(metricCell('Flood Zone', flood.flood_zone || '--', 'F'));
+        cells.push(metricCell('Flood Risk', flood.risk || '--', 'F'));
+        cells.push(metricCell('Flood Ins.', flood.insurance || '--', 'F'));
+    }
+
     // ── Parcel ID ─────────────────────────────────────────────────
     const parcelId = (prop.parcel_identifiers && prop.parcel_identifiers.length > 0)
         ? prop.parcel_identifiers[0].identifier_value

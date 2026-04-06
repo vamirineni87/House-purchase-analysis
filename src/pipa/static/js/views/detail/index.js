@@ -342,6 +342,13 @@ async function lazyLoadAll() {
             _state.notes = Array.isArray(d) ? d : [];
             rerenderSection('notes');
         }).catch(() => {}),
+
+        fetch(`/api/v1/properties/${pid}/flood-zone`).then(r => r.json()).then(d => {
+            if (!d.error) {
+                _state.floodZone = d;
+                rerenderSection('key-metrics');
+            }
+        }).catch(() => {}),
     ];
 
     await Promise.allSettled(loads);
