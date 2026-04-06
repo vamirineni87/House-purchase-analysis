@@ -1,10 +1,12 @@
 /**
- * Property detail header — address, list price, county badge, property type,
- * pursue signal badge, stage dropdown, source badge, last refresh time.
+ * Compact sticky header for property detail scroll page.
+ *
+ * Merges: address, price, pursue badge, pipeline status pill,
+ * county, type, source, last refresh, action buttons, stage selector.
  */
 
 import { formatCurrency, formatDate, escapeHtml } from '../../utils.js';
-import { renderBadge, stageBadgeVariant } from '../../components/badge.js';
+import { renderBadge, stageBadgeVariant, runStatusBadgeVariant } from '../../components/badge.js';
 import { STAGES } from '../../constants.js';
 
 function pursueVariant(status) {
@@ -17,17 +19,20 @@ function pursueVariant(status) {
 }
 
 /**
- * Render the property detail header block.
+ * Render the compact sticky header.
+ * @param {object} state - Full page state
+ * @returns {string} HTML
  */
-export function renderHeader(property, listingData, watchEntry, latestRun, decision, packet) {
+export function renderHeader(state) {
+    const { property, listingData, watchEntry, latestRun, decision, packet, actionLoading } = state;
     const ld = listingData || {};
 
-    // Find current situs address
-    const currentAddr = (property.addresses || []).find(a => a.is_current && a.address_type === 'situs');
-    const address = currentAddr?.normalized_address || property.address || 'No address';
-    const county = currentAddr?.county || property.county || '';
+    // Address
+    const currentAddr = (property?.addresses || []).find(a => a.is_current && a.address_type === 'situs');
+    const address = currentAddr?.normalized_address || property?.address || 'No address';
+    const county = currentAddr?.county || property?.county || '';
 
-    // List price
+    // Price
     const listPrice = ld.price || packet?.price_view?.list_price || null;
     const priceHtml = listPrice
         ? `<span class="text-lg font-bold text-gray-900">${formatCurrency(listPrice)}</span>`
@@ -35,30 +40,36 @@ export function renderHeader(property, listingData, watchEntry, latestRun, decis
 
     // Pursue signal
     let pursueHtml = '';
-    if (decision) {
+    if (decision?.decision_status) {
         const label = decision.decision_status.charAt(0).toUpperCase() + decision.decision_status.slice(1);
-        pursueHtml = renderBadge(label, pursueVariant(decision.decision_status), 'md');
+        pursueHtml = renderBadge(label, pursueVariant(decision.decision_status), 'sm');
     }
 
-    // County badge
-    const countyHtml = county
-        ? renderBadge(county.charAt(0).toUpperCase() + county.slice(1) + ' County', 'info')
-        : '';
+    // Pipeline status pill
+    let pipelinePill = '';
+    if (latestRun) {
+        const s = latestRun.status || 'unknown';
+        pipelinePill = renderBadge(s, runStatusBadgeVariant(s), 'sm');
+    }
 
-    // Property type
-    const propType = (property.property_type || '').replace(/_/g, ' ');
-
-    // Source badge (Zillow/Redfin)
-    const source = ld.source || ld.listing_source || '';
-    const sourceHtml = source
-        ? renderBadge(source, 'muted', 'sm')
-        : '';
-
-    // Last refresh
+    // Metadata line
+    const countyLabel = county ? county.charAt(0).toUpperCase() + county.slice(1) + ' County' : '';
+    const propType = (property?.property_type || '').replace(/_/g, ' ');
+    const source = ld.source || ld.listing_source || ld._source || '';
     const lastRefresh = latestRun?.created_at;
-    const refreshHtml = lastRefresh
-        ? `<span class="text-xs text-gray-400">Last run: ${formatDate(lastRefresh)}</span>`
-        : '';
+
+    const metaParts = [countyLabel, propType, source].filter(Boolean);
+    const metaHtml = metaParts.map(m => `<span class="capitalize">${escapeHtml(m)}</span>`).join('<span class="text-gray-300">|</span>');
+    const refreshHtml = lastRefresh ? `<span>Last run: ${formatDate(lastRefresh)}</span>` : '';
+
+    // Action buttons (compact)
+    const anyLoading = actionLoading !== null;
+    const btn = (id, label) => {
+        const loading = actionLoading === id;
+        const disabled = anyLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200';
+        const spinner = loading ? '<span class="animate-spin inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full mr-1"></span>' : '';
+        return `<button id="${id}" class="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-md ${disabled} transition-colors" ${anyLoading ? 'disabled' : ''}>${spinner}${escapeHtml(label)}</button>`;
+    };
 
     // Stage selector
     const stageOptions = STAGES.map(s => {
@@ -66,31 +77,60 @@ export function renderHeader(property, listingData, watchEntry, latestRun, decis
         return `<option value="${s}" ${selected}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`;
     }).join('');
 
-    const currentStageBadge = watchEntry
-        ? renderBadge(watchEntry.stage, stageBadgeVariant(watchEntry.stage), 'md')
-        : '';
-
     return `
-    <div class="mb-4">
-        <div class="flex items-start justify-between flex-wrap gap-3">
-            <div>
-                <h1 class="text-2xl font-bold text-gray-900">${escapeHtml(address)}</h1>
-                <div class="flex items-center gap-3 mt-1 text-sm text-gray-500 flex-wrap">
-                    ${priceHtml}
-                    ${pursueHtml}
-                    ${countyHtml}
-                    <span class="capitalize">${escapeHtml(propType)}</span>
-                    ${sourceHtml}
-                    ${refreshHtml}
-                </div>
-            </div>
-            <div class="flex items-center gap-2">
-                ${currentStageBadge}
-                <select id="stage-select" class="text-sm border border-gray-300 rounded px-2 py-1">
-                    <option value="" disabled ${!watchEntry ? 'selected' : ''}>${watchEntry ? 'Move to...' : 'Add to watchlist'}</option>
-                    ${stageOptions}
-                </select>
-            </div>
-        </div>
-    </div>`;
+<div id="detail-header" class="sticky top-0 z-20 bg-white border-b border-gray-200 -mx-6 px-6 py-3">
+  <div class="flex items-start justify-between gap-4 flex-wrap">
+    <div class="min-w-0">
+      <div class="flex items-center gap-3 flex-wrap">
+        <a href="#properties" class="text-gray-400 hover:text-blue-600">&larr;</a>
+        <h1 class="text-xl font-bold text-gray-900">${escapeHtml(address)}</h1>
+      </div>
+      <div class="flex items-center gap-3 mt-1 text-sm text-gray-600 flex-wrap">
+        ${priceHtml}
+        ${pursueHtml}
+        ${pipelinePill}
+        ${metaHtml}
+        ${refreshHtml}
+      </div>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
+      ${btn('action-run-pipeline', 'Pipeline')}
+      ${btn('action-refresh-listing', 'Listing')}
+      ${btn('action-refresh-county', 'County')}
+      ${btn('action-deep-comp', 'Deep Comp')}
+      ${btn('action-rerun-ai', 'AI')}
+      <select id="stage-select" class="text-xs border border-gray-300 rounded px-2 py-1.5">
+        <option value="" disabled ${!watchEntry ? 'selected' : ''}>${watchEntry ? 'Stage...' : 'Watchlist'}</option>
+        ${stageOptions}
+      </select>
+    </div>
+  </div>
+</div>`;
+}
+
+/**
+ * Bind header events: action buttons + stage selector.
+ */
+export function bindHeader(container, state, handlers) {
+    const { onAction, onStageChange } = handlers;
+
+    // Action buttons
+    const actionIds = [
+        'action-run-pipeline', 'action-refresh-listing', 'action-refresh-county',
+        'action-deep-comp', 'action-rerun-ai',
+    ];
+    for (const id of actionIds) {
+        const btn = container.querySelector(`#${id}`);
+        if (btn) {
+            btn.addEventListener('click', () => onAction(id));
+        }
+    }
+
+    // Stage selector
+    const select = container.querySelector('#stage-select');
+    if (select) {
+        select.addEventListener('change', () => {
+            if (select.value) onStageChange(select.value);
+        });
+    }
 }
