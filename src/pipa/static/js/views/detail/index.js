@@ -186,10 +186,12 @@ function renderPage(container) {
     }).join('');
 
     container.innerHTML = `
-<div class="px-6">
-  ${headerHtml}
+<div class="sticky top-0 z-20 bg-gray-50">
+  <div class="px-6">
+    ${headerHtml}
+  </div>
+  ${navHtml}
 </div>
-${navHtml}
 <div class="px-6 space-y-4 pt-4 pb-8">
   ${sectionsHtml}
 </div>`;

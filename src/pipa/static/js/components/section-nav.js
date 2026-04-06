@@ -28,7 +28,7 @@ export function renderSectionNav() {
         `<button data-section-link="${id}" class="section-nav-link px-3 py-2 text-xs font-medium text-gray-500 hover:text-blue-600 whitespace-nowrap transition-colors border-b-2 border-transparent">${label}</button>`
     ).join('');
 
-    return `<nav id="section-nav" class="sticky top-0 z-10 bg-white border-b border-gray-200 px-6">
+    return `<nav id="section-nav" class="bg-white border-b border-gray-200 px-6">
   <div class="flex flex-wrap gap-0 -mb-px">${links}</div>
 </nav>`;
 }
