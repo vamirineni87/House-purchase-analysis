@@ -373,6 +373,96 @@ class CompService:
             if comp.condition is None:
                 unresolved.append(f"{comp.address}: condition not rated by county")
 
+        # AI comp interpretation — ask Claude to rank, flag outliers, value opinion
+        ai_interpretation: dict = {}
+        try:
+            from pipa.services.ai_extraction import interpret_comps
+
+            ai_subject = {
+                **subject_data,
+                "address": (await CompService._load_subject_address(db, property_id)),
+            }
+
+            # Load school data for context (school zone differences affect value)
+            school_info = None
+            try:
+                school_result = await db.execute(
+                    select(SourceRecord).where(
+                        SourceRecord.property_id == property_id,
+                        SourceRecord.source_name == "lcps_schools",
+                    ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+                )
+                school_record = school_result.scalar_one_or_none()
+                if school_record and school_record.raw_payload:
+                    school_info = school_record.raw_payload
+            except Exception:
+                pass
+
+            # Load condition data
+            condition_info = None
+            try:
+                cond_result = await db.execute(
+                    select(AnalysisRun).where(
+                        AnalysisRun.property_id == property_id,
+                        AnalysisRun.analysis_type == "condition",
+                    ).order_by(AnalysisRun.computed_at.desc()).limit(1)
+                )
+                cond_run = cond_result.scalar_one_or_none()
+                if cond_run and cond_run.output_json:
+                    condition_info = cond_run.output_json
+            except Exception:
+                pass
+
+            # Load flood data
+            flood_info = None
+            try:
+                flood_result = await db.execute(
+                    select(SourceRecord).where(
+                        SourceRecord.property_id == property_id,
+                        SourceRecord.source_name == "fema_flood_zone",
+                    ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+                )
+                flood_record = flood_result.scalar_one_or_none()
+                if flood_record and flood_record.raw_payload:
+                    flood_info = flood_record.raw_payload
+            except Exception:
+                pass
+
+            # Load financial data
+            financial_info = None
+            try:
+                fin_result = await db.execute(
+                    select(AnalysisRun).where(
+                        AnalysisRun.property_id == property_id,
+                        AnalysisRun.analysis_type == "financial",
+                    ).order_by(AnalysisRun.computed_at.desc()).limit(1)
+                )
+                fin_run = fin_result.scalar_one_or_none()
+                if fin_run and fin_run.output_json:
+                    financial_info = fin_run.output_json
+            except Exception:
+                pass
+
+            ai_market_ctx = {
+                "active_count": len(active_candidates),
+                "pending_count": len(pending_candidates),
+                "sold_count": len(sold_candidates),
+            }
+            if school_info:
+                ai_market_ctx["subject_schools"] = school_info
+
+            ai_interpretation = await interpret_comps(
+                subject=ai_subject,
+                comps=[c.model_dump() for c in enriched_comps],
+                market_context=ai_market_ctx,
+                condition_data=condition_info,
+                flood_data=flood_info,
+                financial_data=financial_info,
+            )
+            logger.info("AI comp interpretation: confidence=%s", ai_interpretation.get("confidence"))
+        except Exception:
+            logger.exception("AI comp interpretation failed — continuing with math-only results")
+
         # Market context
         market_context: dict[str, Any] = {
             "active_count": len(active_candidates),
@@ -412,6 +502,7 @@ class CompService:
             "conflicts": conflicts,
             "market_context": market_context,
             "unresolved_unknowns": unresolved,
+            "ai_interpretation": ai_interpretation,
         }
 
         # Store analysis run
@@ -521,29 +612,40 @@ class CompService:
                         "property_type": entry.get("property_type") or entry.get("homeType"),
                     })
 
-        # --- Source 2: County SourceRecords (neighborhood sales) ---
+        # --- Source 2: County neighborhood sales ---
         county_records = await db.execute(
             select(SourceRecord).where(
                 SourceRecord.property_id == property_id,
                 SourceRecord.source_name.in_([
                     "loudoun_county", "loudoun_parcel",
                 ]),
-            ).order_by(SourceRecord.fetched_at.desc())
+            ).order_by(SourceRecord.fetched_at.desc()).limit(1)
         )
         for record in county_records.scalars().all():
             payload = record.raw_payload or {}
-            # The Loudoun scraper stores neighborhood sales in the
-            # "Sales / Transfers" tab if navigated, or sometimes in
-            # the raw data from the assessment portal sidebar
-            sales_tab = payload.get("Sales / Transfers", {})
-            rows = sales_tab.get("_rows", [])
-            for row in rows:
-                # County sales rows often have: [date, price, type, ...]
-                if len(row) >= 2 and row[0] and row[1]:
-                    # Try to parse as sale entry from neighborhood context
-                    # Skip header rows
-                    if row[0].lower().startswith("sale"):
-                        continue
+            # Neighborhood Sales tab from the county scraper
+            ns = payload.get("Neighborhood Sales", {})
+            sales_list = ns.get("sales", [])
+            for sale in sales_list:
+                addr = sale.get("address") or sale.get("parcel_id") or ""
+                if not addr:
+                    continue
+                normed = _normalize_address(addr)
+                if normed in seen_addresses:
+                    continue
+                seen_addresses.add(normed)
+                candidates.append({
+                    "address": addr.strip(),
+                    "price": _safe_float(sale.get("sale_price")),
+                    "date": sale.get("sale_date") or "",
+                    "status": "sold",
+                    "source": "loudoun_neighborhood_sales",
+                    "sqft": _safe_int(sale.get("sqft")),
+                    "beds": _safe_int(sale.get("beds")),
+                    "baths": _safe_float(sale.get("baths")),
+                    "year_built": _safe_int(sale.get("year_built")),
+                    "property_type": sale.get("style") or sale.get("property_type"),
+                })
 
         # Filter sold comps to last 2 quarters (6 months)
         cutoff = date.today().replace(day=1)
@@ -589,10 +691,10 @@ class CompService:
     ) -> list[CompCandidate]:
         """Filter candidates to likely comps based on subject property.
 
-        Filters:
+        Filters (appraisal-grade tolerances):
         - same property type (if known)
-        - sqft within +/-30% of subject
-        - year_built within +/-15 years
+        - sqft within +/-15% of subject
+        - year_built within +/-10 years
         - beds within +/-1
         - baths within +/-1
         - sold within last 6 months (already done in find_comp_candidates)
@@ -616,15 +718,15 @@ class CompService:
                 if subject_type != c.property_type.lower():
                     continue
 
-            # Sqft filter: within +/-30% (skip if unknown)
+            # Sqft filter: within +/-15% (skip if unknown)
             if subject_sqft and c.sqft:
                 pct = abs(c.sqft - subject_sqft) / subject_sqft
-                if pct > 0.30:
+                if pct > 0.15:
                     continue
 
-            # Year built filter: within +/-15 years (skip if unknown)
+            # Year built filter: within +/-10 years (skip if unknown)
             if subject_year and c.year_built:
-                if abs(c.year_built - subject_year) > 15:
+                if abs(c.year_built - subject_year) > 10:
                     continue
 
             # Beds filter: within +/-1 (skip if unknown)
@@ -667,18 +769,18 @@ class CompService:
         """
         score = 0.0
 
-        # Sqft closeness (35 pts): 0% diff = 35, 30% diff = 0
+        # Sqft closeness (35 pts): 0% diff = 35, 15% diff = 0
         if subject_sqft and comp.sqft:
             pct_diff = abs(comp.sqft - subject_sqft) / subject_sqft
-            score += max(0, 35 * (1 - pct_diff / 0.30))
+            score += max(0, 35 * (1 - pct_diff / 0.15))
         elif not comp.sqft:
             # Unknown sqft — give partial credit
             score += 10
 
-        # Year built (20 pts): 0 year diff = 20, 15 year diff = 0
+        # Year built (20 pts): 0 year diff = 20, 10 year diff = 0
         if subject_year and comp.year_built:
             year_diff = abs(comp.year_built - subject_year)
-            score += max(0, 20 * (1 - year_diff / 15))
+            score += max(0, 20 * (1 - year_diff / 10))
         elif not comp.year_built:
             score += 5
 
@@ -1462,6 +1564,20 @@ class CompService:
                 subject["year_built"] = pf.get("year_built")
 
         return subject
+
+    @staticmethod
+    async def _load_subject_address(db: AsyncSession, property_id: str) -> str:
+        """Load the subject property's address string."""
+        result = await db.execute(
+            select(AddressHistory)
+            .where(AddressHistory.property_id == property_id)
+            .order_by(AddressHistory.created_at.desc())
+            .limit(1)
+        )
+        addr = result.scalar_one_or_none()
+        if addr:
+            return addr.normalized_address or addr.raw_address or "Unknown address"
+        return "Unknown address"
 
     # ==================================================================
     # Assessment context loader (for quick comp)

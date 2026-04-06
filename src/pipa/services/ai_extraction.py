@@ -362,31 +362,83 @@ async def generate_property_summary(
     property_data: dict,
     county_data: dict | None = None,
     price_benchmarks: dict | None = None,
+    comp_data: dict | None = None,
+    financial_data: dict | None = None,
+    condition_data: dict | None = None,
+    school_data: dict | None = None,
+    flood_data: dict | None = None,
+    warnings: list[str] | None = None,
 ) -> dict:
     """Generate a buyer-focused property summary using AI.
 
-    Combines listing data + county data + price benchmarks into
-    a concise buyer-oriented summary with pursue/maybe/pass recommendation.
+    Combines ALL available data — listing, county, comps, financial,
+    condition, schools, flood, warnings — into a comprehensive
+    buyer-oriented summary with pursue/maybe/pass recommendation.
     """
     context_parts = [f"Listing data: {json.dumps(property_data, default=str)[:2000]}"]
     if county_data:
         context_parts.append(f"County data: {json.dumps(county_data, default=str)[:1500]}")
     if price_benchmarks:
         context_parts.append(f"Price benchmarks: {json.dumps(price_benchmarks, default=str)[:500]}")
+    if comp_data:
+        # Include value band, confidence, asking assessment, filtered comps summary
+        comp_summary = {}
+        if comp_data.get("rough_value_band"):
+            comp_summary["value_band"] = comp_data["rough_value_band"]
+        if comp_data.get("quick_confidence"):
+            comp_summary["confidence"] = comp_data["quick_confidence"]
+        if comp_data.get("asking_vs_comps"):
+            comp_summary["asking_vs_comps"] = comp_data["asking_vs_comps"]
+        if comp_data.get("filtered_comps"):
+            comp_summary["comp_count"] = len(comp_data["filtered_comps"])
+            comp_summary["comps"] = comp_data["filtered_comps"][:6]
+        if comp_data.get("ai_interpretation"):
+            ai_int = comp_data["ai_interpretation"]
+            if ai_int.get("value_opinion"):
+                comp_summary["ai_value_opinion"] = ai_int["value_opinion"]
+            if ai_int.get("asking_assessment"):
+                comp_summary["ai_asking_assessment"] = ai_int["asking_assessment"]
+            if ai_int.get("key_insights"):
+                comp_summary["ai_insights"] = ai_int["key_insights"]
+        context_parts.append(f"Comparable sales: {json.dumps(comp_summary, default=str)[:1500]}")
+    if financial_data:
+        fin_summary = {}
+        for key in ("payment_breakdowns", "cash_at_closing", "stress_tests", "monthly_total"):
+            if key in financial_data:
+                fin_summary[key] = financial_data[key]
+        context_parts.append(f"Financial analysis: {json.dumps(fin_summary, default=str)[:1000]}")
+    if condition_data:
+        cond_summary = {}
+        for key in ("overall_score", "components", "capex_10yr", "red_flags"):
+            if key in condition_data:
+                cond_summary[key] = condition_data[key]
+        context_parts.append(f"Condition assessment: {json.dumps(cond_summary, default=str)[:800]}")
+    if school_data:
+        context_parts.append(f"School assignments: {json.dumps(school_data, default=str)[:500]}")
+    if flood_data:
+        context_parts.append(f"Flood zone: {json.dumps(flood_data, default=str)[:300]}")
+    if warnings:
+        context_parts.append(f"Warning flags: {json.dumps(warnings, default=str)[:500]}")
     context = "\n\n".join(context_parts)
 
     prompt = (
-        "You are a buyer's advisor analyzing a property. Based on the data below, "
+        "You are a buyer's advisor analyzing a residential property in Northern Virginia "
+        "for a buyer making a $1M+ purchase decision. Based on ALL the data below, "
         "provide a JSON object with:\n"
         "- quick_take: pursue/maybe/pass\n"
         "- confidence: high/medium/low\n"
         "- top_3_pros: [list of 3 strings]\n"
         "- top_3_cons: [list of 3 strings]\n"
         "- red_flags: [list of strings, empty if none]\n"
-        "- questions_for_agent: [list of 3-5 questions to ask]\n"
-        "- one_line_summary: string (1 sentence verdict)\n\n"
+        "- questions_for_agent: [list of 3-5 questions to ask the listing agent]\n"
+        "- one_line_summary: string (1 sentence verdict)\n"
+        "- value_assessment: string (is the asking price fair given comps and condition?)\n"
+        "- financial_notes: string (any concerns about affordability or cash requirements)\n"
+        "- negotiation_leverage: [list of strings — points that could justify a lower offer]\n\n"
         "Label each pro/con as [FACT] if from county/verified data, "
-        "[ESTIMATE] if from listing/Zillow, [INFERENCE] if your analysis.\n\n"
+        "[ESTIMATE] if from listing/Zillow, [INFERENCE] if your analysis.\n"
+        "Consider comps, condition, financial burden, school quality, flood risk, "
+        "and any warning flags when forming your recommendation.\n\n"
         f"{context}"
     )
 
@@ -447,3 +499,169 @@ async def extract_and_store(
 
     await db.flush()
     return result
+
+
+async def interpret_comps(
+    subject: dict,
+    comps: list[dict],
+    market_context: dict | None = None,
+    condition_data: dict | None = None,
+    flood_data: dict | None = None,
+    financial_data: dict | None = None,
+) -> dict:
+    """AI interpretation of comparable sales vs subject property.
+
+    Asks Claude to rank comps by true comparability, flag outliers,
+    identify non-arms-length transactions, and provide a value opinion
+    with reasoning — things pure math misses.
+
+    Returns dict with:
+      ranked_comps: [{address, rank, reasoning, is_outlier, adjusted_opinion}]
+      value_opinion: {low, mid, high, reasoning}
+      outliers: [{address, reason}]
+      key_insights: [str]
+      confidence: str
+    """
+    subject_summary = (
+        f"Subject: {subject.get('address', 'Unknown')}\n"
+        f"  List Price: ${subject.get('list_price', 0):,.0f}\n"
+        f"  Sqft: {subject.get('sqft', 'unknown')}, "
+        f"Beds: {subject.get('beds', 'unknown')}, "
+        f"Baths: {subject.get('baths', 'unknown')}\n"
+        f"  Year Built: {subject.get('year_built', 'unknown')}\n"
+        f"  Lot: {subject.get('lot_size', 'unknown')} sqft\n"
+        f"  Condition: {subject.get('condition', 'unknown')}, "
+        f"Grade: {subject.get('grade', 'unknown')}\n"
+        f"  County: {subject.get('county', 'unknown')}\n"
+        f"  Subdivision: {subject.get('subdivision', 'unknown')}"
+    )
+
+    comp_lines = []
+    for i, c in enumerate(comps, 1):
+        sqft = c.get("sqft_above_grade") or c.get("sqft") or c.get("total_sqft") or "?"
+        beds = c.get("beds") or c.get("bedrooms") or "?"
+        baths = c.get("baths") or c.get("bathrooms") or "?"
+        yr = c.get("year_built") or "?"
+        price = c.get("sale_price") or c.get("price") or 0
+        ppsf = c.get("price_per_sqft") or ""
+        cond = c.get("condition") or "?"
+        grade = c.get("grade") or "?"
+        lot = c.get("lot_size") or "?"
+        addr = c.get("address") or f"Comp {i}"
+        sale_date = c.get("sale_date") or c.get("date") or "?"
+        similarity = c.get("similarity_score") or "?"
+
+        comp_lines.append(
+            f"  Comp {i}: {addr}\n"
+            f"    Sale: ${price:,.0f} on {sale_date}\n"
+            f"    Sqft: {sqft}, Beds: {beds}, Baths: {baths}, Year: {yr}\n"
+            f"    Condition: {cond}, Grade: {grade}, Lot: {lot} sqft\n"
+            f"    Math Similarity Score: {similarity}/100"
+            + (f", $/sqft: ${ppsf:,.0f}" if ppsf else "")
+        )
+
+    comps_text = "\n".join(comp_lines)
+
+    market_text = ""
+    if market_context:
+        market_text = (
+            f"\nMarket Context:\n"
+            f"  Active listings nearby: {market_context.get('active_count', 0)}\n"
+            f"  Pending sales: {market_context.get('pending_count', 0)}\n"
+            f"  Sold in last 6 months: {market_context.get('sold_count', 0)}"
+        )
+        if market_context.get("active_price_range"):
+            apr = market_context["active_price_range"]
+            market_text += f"\n  Active price range: ${apr.get('low', 0):,.0f} - ${apr.get('high', 0):,.0f}"
+        if market_context.get("subject_schools"):
+            schools = market_context["subject_schools"]
+            market_text += f"\n  Subject school assignments: {json.dumps(schools, default=str)[:500]}"
+            market_text += "\n  NOTE: Comps in different school zones may not be directly comparable."
+
+    condition_text = ""
+    if condition_data:
+        cond_parts = []
+        if condition_data.get("overall_score") is not None:
+            cond_parts.append(f"Overall Score: {condition_data['overall_score']}/100")
+        if condition_data.get("components"):
+            for comp in condition_data["components"][:8]:
+                name = comp.get("component") or comp.get("name", "?")
+                remaining = comp.get("remaining_life_years") or comp.get("remaining_life", "?")
+                cond_parts.append(f"  {name}: {remaining} yrs remaining")
+        if condition_data.get("capex_10yr"):
+            cond_parts.append(f"10-Year CapEx Estimate: ${condition_data['capex_10yr']:,.0f}")
+        if condition_data.get("red_flags"):
+            cond_parts.append(f"Red Flags: {', '.join(str(f) for f in condition_data['red_flags'])}")
+        if cond_parts:
+            condition_text = "\n\nSubject Condition:\n" + "\n".join(f"  {p}" for p in cond_parts)
+
+    flood_text = ""
+    if flood_data:
+        zone = flood_data.get("flood_zone") or flood_data.get("zone", "Unknown")
+        risk = flood_data.get("risk_level") or flood_data.get("risk", "Unknown")
+        insurance = flood_data.get("insurance_required", "Unknown")
+        flood_text = f"\n\nFlood Zone: {zone} (Risk: {risk}, Insurance Required: {insurance})"
+
+    financial_text = ""
+    if financial_data:
+        fin_parts = []
+        if financial_data.get("monthly_total"):
+            fin_parts.append(f"Monthly Payment (default scenario): ${financial_data['monthly_total']:,.0f}")
+        if financial_data.get("cash_at_closing"):
+            cac = financial_data["cash_at_closing"]
+            if isinstance(cac, dict):
+                fin_parts.append(f"Cash at Closing: ${cac.get('total', 0):,.0f}")
+            else:
+                fin_parts.append(f"Cash at Closing: ${cac:,.0f}")
+        if financial_data.get("stress_tests"):
+            fin_parts.append(f"Stress Tests: {json.dumps(financial_data['stress_tests'], default=str)[:300]}")
+        if fin_parts:
+            financial_text = "\n\nFinancial Context:\n" + "\n".join(f"  {p}" for p in fin_parts)
+
+    prompt = (
+        "You are a residential real estate appraiser analyzing comparable sales for a "
+        "home purchase decision in Northern Virginia. The buyer is making a $1M+ decision "
+        "and needs honest, precise analysis.\n\n"
+        f"{subject_summary}\n\n"
+        f"Comparable Sales:\n{comps_text}\n"
+        f"{market_text}{condition_text}{flood_text}{financial_text}\n\n"
+        "Analyze these comps and respond in JSON with this exact structure:\n"
+        "{\n"
+        '  "ranked_comps": [\n'
+        "    {\n"
+        '      "address": "...",\n'
+        '      "rank": 1,\n'
+        '      "reasoning": "Why this is/isn\'t a good comp (specific, 1-2 sentences)",\n'
+        '      "is_outlier": false,\n'
+        '      "outlier_reason": null,\n'
+        '      "adjusted_opinion": 1300000\n'
+        "    }\n"
+        "  ],\n"
+        '  "value_opinion": {\n'
+        '    "low": 1200000,\n'
+        '    "mid": 1275000,\n'
+        '    "high": 1350000,\n'
+        '    "reasoning": "2-3 sentence explanation of value conclusion"\n'
+        "  },\n"
+        '  "outliers": [\n'
+        '    {"address": "...", "reason": "Estate sale / new construction / different neighborhood"}\n'
+        "  ],\n"
+        '  "key_insights": [\n'
+        '    "Specific insight about market, pricing, or comparability"\n'
+        "  ],\n"
+        '  "confidence": "high|moderate|low",\n'
+        '  "asking_assessment": "The asking price of $X is [above/at/below] market because..."\n'
+        "}\n\n"
+        "Focus on:\n"
+        "- Which comps are TRULY comparable (same neighborhood feel, similar age/size/condition)\n"
+        "- Flag distress sales, estate sales, new construction, or non-arms-length transactions\n"
+        "- Whether the asking price is justified by the comp evidence\n"
+        "- Any patterns the math might miss (price trends, neighborhood differences, condition gaps)\n"
+        "- School zone differences — comps in different school boundaries may not be directly comparable\n"
+        "- If data is missing for some comps, note the uncertainty\n"
+        "Respond ONLY with the JSON, no other text."
+    )
+
+    response = await _ask_claude(prompt, timeout=90, call_label="interpret_comps")
+    result = _parse_json_from_response(response)
+    return result if isinstance(result, dict) else {}

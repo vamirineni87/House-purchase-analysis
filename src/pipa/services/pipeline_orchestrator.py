@@ -755,8 +755,8 @@ async def _task_warning_engine(ctx: _ExecutionContext, db: AsyncSession) -> dict
 async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     """AI PASS 2: interpretation and narrative.
 
-    Uses Claude CLI — may hang if another Claude session is active.
-    Times out after 30 seconds and skips gracefully.
+    Feeds ALL available data to Claude — listing, county, comps, financial,
+    condition, schools, flood, warnings — for a comprehensive buyer opinion.
     """
     import shutil
 
@@ -769,14 +769,65 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     try:
         from pipa.services.ai_extraction import generate_property_summary
 
+        # Load comp data from DB (quick comp + deep comp if available)
+        comp_data = None
+        try:
+            from pipa.services.comp_service import CompService
+            stored = await CompService.get_stored_results(db, ctx.property_id)
+            if stored:
+                comp_data = stored.get("quick_comp") or stored.get("deep_comp")
+                # Prefer deep comp if both available
+                if stored.get("deep_comp") and stored["deep_comp"].get("sold_comps"):
+                    comp_data = stored["deep_comp"]
+        except Exception:
+            logger.debug("Could not load comp data for AI Pass 2")
+
+        # Load school data from DB
+        school_data = None
+        try:
+            from pipa.models.source import SourceRecord
+            school_result = await db.execute(
+                select(SourceRecord).where(
+                    SourceRecord.property_id == ctx.property_id,
+                    SourceRecord.source_name == "lcps_schools",
+                ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+            )
+            school_record = school_result.scalar_one_or_none()
+            if school_record and school_record.raw_payload:
+                school_data = school_record.raw_payload
+        except Exception:
+            logger.debug("Could not load school data for AI Pass 2")
+
+        # Load flood zone data
+        flood_data = None
+        try:
+            from pipa.models.source import SourceRecord
+            flood_result = await db.execute(
+                select(SourceRecord).where(
+                    SourceRecord.property_id == ctx.property_id,
+                    SourceRecord.source_name == "fema_flood_zone",
+                ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+            )
+            flood_record = flood_result.scalar_one_or_none()
+            if flood_record and flood_record.raw_payload:
+                flood_data = flood_record.raw_payload
+        except Exception:
+            logger.debug("Could not load flood data for AI Pass 2")
+
         # Use a shorter timeout to avoid blocking the pipeline
         summary = await asyncio.wait_for(
             generate_property_summary(
                 property_data=ctx.canonical,
                 county_data=ctx.county_data,
                 price_benchmarks=ctx.math_results.get("price_benchmarks"),
+                comp_data=comp_data,
+                financial_data=ctx.math_results.get("financial"),
+                condition_data=ctx.math_results.get("condition"),
+                school_data=school_data,
+                flood_data=flood_data,
+                warnings=ctx.warnings,
             ),
-            timeout=45,  # 45 second max — kill if hung
+            timeout=60,  # 60 second max — more data to process
         )
         ctx.math_results["ai_interpretation"] = summary
         await _persist_analysis(db, ctx.property_id, "ai_interpretation", summary)

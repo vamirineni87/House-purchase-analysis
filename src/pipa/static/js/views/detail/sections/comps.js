@@ -54,6 +54,14 @@ function confidenceVariant(conf) {
     return 'critical';
 }
 
+/** Format address — if it looks like a parcel ID (all digits), label it. */
+function formatAddress(addr) {
+    if (!addr) return 'Unknown';
+    const cleaned = addr.replace(/\s/g, '');
+    if (/^\d{8,}$/.test(cleaned)) return `Parcel ${cleaned}`;
+    return addr;
+}
+
 function renderCompTable(comps, isDeep) {
     if (!comps || comps.length === 0) return '';
 
@@ -62,7 +70,7 @@ function renderCompTable(comps, isDeep) {
 
     const rows = sorted.map((c, i) => {
         const bg = i % 2 === 1 ? 'bg-gray-50' : '';
-        const address = c.address || 'Unknown';
+        const address = formatAddress(c.address);
         const price = c.price ?? c.sale_price;
         const sqft = c.sqft ?? c.sqft_above_grade;
         const beds = c.beds ?? c.bedrooms ?? '';
@@ -201,6 +209,106 @@ export function render(state) {
             </div>`;
         }
 
+        // AI Interpretation
+        let aiHtml = '';
+        const ai = deepComp.ai_interpretation;
+        if (ai && Object.keys(ai).length > 0) {
+            const aiParts = [];
+
+            // Value opinion
+            if (ai.value_opinion) {
+                const vo = ai.value_opinion;
+                aiParts.push(`
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <div class="text-xs font-medium text-blue-800 mb-1">AI Value Opinion</div>
+                    <div class="flex items-center gap-4 text-xs mb-1.5">
+                        <span class="text-green-600 font-medium">Low: ${vo.low ? formatCurrency(vo.low) : '—'}</span>
+                        <span class="text-blue-600 font-bold">Mid: ${vo.mid ? formatCurrency(vo.mid) : '—'}</span>
+                        <span class="text-red-600 font-medium">High: ${vo.high ? formatCurrency(vo.high) : '—'}</span>
+                    </div>
+                    ${vo.reasoning ? `<p class="text-xs text-blue-700">${escapeHtml(vo.reasoning)}</p>` : ''}
+                </div>`);
+            }
+
+            // Asking assessment
+            if (ai.asking_assessment) {
+                aiParts.push(`
+                <div class="bg-gray-50 border border-gray-200 rounded-lg p-2.5">
+                    <div class="text-xs font-medium text-gray-700 mb-0.5">Asking Price Assessment</div>
+                    <p class="text-xs text-gray-600">${escapeHtml(ai.asking_assessment)}</p>
+                </div>`);
+            }
+
+            // Key insights
+            if (ai.key_insights?.length) {
+                const items = ai.key_insights.map(i => `<li class="text-xs text-gray-700">• ${escapeHtml(i)}</li>`).join('');
+                aiParts.push(`
+                <div>
+                    <div class="text-xs font-medium text-gray-600 mb-1">Key Insights</div>
+                    <ul class="space-y-0.5">${items}</ul>
+                </div>`);
+            }
+
+            // Outliers
+            if (ai.outliers?.length) {
+                const items = ai.outliers.map(o => {
+                    const addr = formatAddress(o.address);
+                    return `<li class="text-xs text-amber-700">⚠ ${escapeHtml(addr)}: ${escapeHtml(o.reason)}</li>`;
+                }).join('');
+                aiParts.push(`
+                <div class="bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                    <div class="text-xs font-medium text-amber-700 mb-1">Outliers Flagged</div>
+                    <ul class="space-y-0.5">${items}</ul>
+                </div>`);
+            }
+
+            // Ranked comps reasoning
+            if (ai.ranked_comps?.length) {
+                const rows = ai.ranked_comps.map((rc, i) => {
+                    const addr = formatAddress(rc.address);
+                    const bg = i % 2 === 1 ? 'bg-gray-50' : '';
+                    const outlierTag = rc.is_outlier ? ' <span class="text-amber-600 text-[10px]">(outlier)</span>' : '';
+                    return `
+                    <tr class="${bg}">
+                        <td class="px-2 py-1 text-xs text-gray-500">#${rc.rank}</td>
+                        <td class="px-2 py-1 text-xs text-gray-900">${escapeHtml(addr)}${outlierTag}</td>
+                        <td class="px-2 py-1 text-xs text-gray-600">${escapeHtml(rc.reasoning || '')}</td>
+                        <td class="px-2 py-1 text-xs text-right font-medium text-gray-700">${rc.adjusted_opinion ? formatCurrency(rc.adjusted_opinion) : '—'}</td>
+                    </tr>`;
+                }).join('');
+                aiParts.push(`
+                <div>
+                    <div class="text-xs font-medium text-gray-600 mb-1">AI Comp Ranking</div>
+                    <div class="overflow-x-auto rounded-lg border border-gray-200">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-2 py-1.5 text-left text-xs font-medium text-gray-500">#</th>
+                                    <th class="px-2 py-1.5 text-left text-xs font-medium text-gray-500">Address</th>
+                                    <th class="px-2 py-1.5 text-left text-xs font-medium text-gray-500">Reasoning</th>
+                                    <th class="px-2 py-1.5 text-right text-xs font-medium text-gray-500">AI Value</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-100">${rows}</tbody>
+                        </table>
+                    </div>
+                </div>`);
+            }
+
+            const aiConfBadge = ai.confidence
+                ? renderBadge(`AI: ${ai.confidence}`, confidenceVariant(ai.confidence), 'sm')
+                : '';
+
+            aiHtml = `
+            <div class="border-t border-gray-200 pt-3 mt-3">
+                <div class="flex items-center gap-2 mb-2">
+                    <h4 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">AI Interpretation</h4>
+                    ${aiConfBadge}
+                </div>
+                <div class="space-y-2.5">${aiParts.join('')}</div>
+            </div>`;
+        }
+
         parts.push(`
         <div>
             <div class="flex items-center gap-2 mb-2">
@@ -211,6 +319,7 @@ export function render(state) {
                 ${valueRange}
                 ${soldTableHtml}
                 ${conflictsHtml}
+                ${aiHtml}
             </div>
         </div>`);
     }
