@@ -122,15 +122,15 @@ export function render(state) {
         }
     }
 
-    // Missing data
-    if (!packet) actions.push('Run full pipeline to generate decision packet');
+    // Missing data — only show if data is truly absent (not just loading)
+    const hasPacket = packet && packet.quick_take && packet.quick_take.recommendation;
+    const hasCounty = state.countyData && (state.countyData.summary && Object.keys(state.countyData.summary).length > 0 || (state.countyData.assessments && state.countyData.assessments.length > 0));
+    const hasComps = state.quickComp && (state.quickComp.filtered_comps?.length > 0 || state.quickComp.candidates?.length > 0);
+
+    if (!latestRun) actions.push('Run pipeline to analyze this property');
     if (!ld.price) actions.push('No list price — add via Financial tab or re-scrape');
-    if (!ld.year_built) actions.push('Missing year built — verify listing data');
-    if (!state.countyData) actions.push('No county data — run county refresh');
-    if (!state.quickComp) actions.push('No comp analysis — run Quick Comp');
-    if (!state.schools || (Array.isArray(state.schools) && state.schools.length === 0)) {
-        actions.push('No school data — run pipeline or school refresh');
-    }
+    if (!hasCounty && latestRun) actions.push('No county data — run county refresh');
+    if (!hasComps && latestRun) actions.push('No comp analysis — run Quick Comp');
 
     // Warnings from packet
     const packetWarnings = packet?.warning_engine?.warnings || [];
