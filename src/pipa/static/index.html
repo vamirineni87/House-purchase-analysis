@@ -12,10 +12,15 @@
 </head>
 <body class="bg-gray-50 text-gray-900 h-screen overflow-hidden">
     <div class="flex h-full">
-        <aside id="sidebar" class="w-64 bg-white border-r border-gray-200 p-4 hidden md:flex md:flex-col flex-shrink-0 h-full overflow-y-auto">
-            <h1 class="text-xl font-bold mb-6">
-                <a href="#dashboard" class="hover:text-blue-600">PIPA</a>
-            </h1>
+        <aside id="sidebar" class="w-64 bg-white border-r border-gray-200 p-4 flex-col flex-shrink-0 h-full overflow-y-auto hidden md:flex">
+            <div class="flex items-center justify-between mb-6">
+                <h1 class="text-xl font-bold">
+                    <a href="#dashboard" class="hover:text-blue-600">PIPA</a>
+                </h1>
+                <button id="sidebar-collapse" class="text-gray-400 hover:text-gray-600 md:hidden" title="Close sidebar">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
             <nav id="sidebar-nav" class="space-y-1">
                 <a href="#dashboard" data-route="dashboard" class="nav-link block px-3 py-2 rounded-md text-sm hover:bg-gray-100">Dashboard</a>
                 <a href="#properties" data-route="properties" class="nav-link block px-3 py-2 rounded-md text-sm hover:bg-gray-100">Properties</a>
@@ -24,10 +29,33 @@
                 <a href="#settings" data-route="settings" class="nav-link block px-3 py-2 rounded-md text-sm hover:bg-gray-100">Settings</a>
             </nav>
         </aside>
-        <main id="app" class="flex-1 overflow-y-auto"></main>
+        <div class="flex-1 flex flex-col h-full min-w-0">
+            <button id="sidebar-toggle" class="md:hidden fixed top-2 left-2 z-50 bg-white border border-gray-200 rounded-md p-1.5 shadow-sm text-gray-500 hover:text-gray-700">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <main id="app" class="flex-1 overflow-y-auto"></main>
+        </div>
     </div>
     <div id="modal-root"></div>
     <div id="toast-root" class="fixed top-4 right-4 z-50 space-y-2"></div>
-    <script type="module" src="/static/js/app.js?v=20260406d"></script>
+    <script type="module" src="/static/js/app.js?v=20260406e"></script>
+    <script>
+        // Sidebar toggle for mobile
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('hidden');
+            sidebar.classList.toggle('flex');
+            sidebar.classList.toggle('fixed');
+            sidebar.classList.toggle('z-40');
+            sidebar.classList.toggle('inset-y-0');
+            sidebar.classList.toggle('left-0');
+            sidebar.classList.toggle('shadow-lg');
+        });
+        document.getElementById('sidebar-collapse')?.addEventListener('click', () => {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.add('hidden');
+            sidebar.classList.remove('flex', 'fixed', 'z-40', 'inset-y-0', 'left-0', 'shadow-lg');
+        });
+    </script>
 </body>
 </html>
