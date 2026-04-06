@@ -41,17 +41,30 @@ _RATE_LIMIT_SECONDS = 5  # Min seconds between Claude calls
 _DEFAULT_TIMEOUT = 60
 _DEFAULT_MODEL = "claude-sonnet-4-6"  # Fast model for extraction tasks
 
+# In-memory log of recent AI calls (prompt + response + timing)
+# Flushed to DB via store_ai_call_log() after each pipeline step.
+_call_log: list[dict] = []
+
+
+def get_call_log() -> list[dict]:
+    """Return and clear the accumulated AI call log."""
+    log = list(_call_log)
+    _call_log.clear()
+    return log
+
 
 async def _ask_claude(
     prompt: str,
     timeout: int = _DEFAULT_TIMEOUT,
     model: str = _DEFAULT_MODEL,
     max_retries: int = 2,
+    call_label: str = "",
 ) -> str | None:
     """Call Claude via CLI subprocess (async, non-blocking).
 
     Uses `claude -p` with --output-format json for structured output.
     Rate limited to avoid hammering the CLI.
+    Every call is logged to _call_log with prompt, raw response, model, and timing.
     """
     global _last_call_time
 
@@ -65,7 +78,8 @@ async def _ask_claude(
 
     for attempt in range(max_retries + 1):
         try:
-            _last_call_time = time.monotonic()
+            call_start = time.monotonic()
+            _last_call_time = call_start
 
             claude_bin = _CLAUDE_BIN or shutil.which("claude")
             if not claude_bin:
@@ -82,9 +96,21 @@ async def _ask_claude(
                 proc.communicate(), timeout=timeout
             )
 
+            duration_ms = int((time.monotonic() - call_start) * 1000)
+
             if proc.returncode != 0:
                 err_text = stderr.decode("utf-8", errors="replace").strip()
                 logger.warning("Claude CLI error (attempt %d): %s", attempt + 1, err_text[:200])
+                _call_log.append({
+                    "label": call_label,
+                    "model": model,
+                    "prompt": prompt,
+                    "response": None,
+                    "error": err_text[:500],
+                    "duration_ms": duration_ms,
+                    "attempt": attempt + 1,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
                 if attempt < max_retries:
                     await asyncio.sleep(5)
                     continue
@@ -94,16 +120,40 @@ async def _ask_claude(
 
             # Parse JSON output format
             # claude --output-format json returns {"type": "result", "result": "..."}
+            parsed_response = raw
             try:
                 data = json.loads(raw)
                 if isinstance(data, dict) and "result" in data:
-                    return data["result"]
-                return raw
+                    parsed_response = data["result"]
             except json.JSONDecodeError:
-                return raw
+                pass
+
+            # Log the call
+            _call_log.append({
+                "label": call_label,
+                "model": model,
+                "prompt": prompt,
+                "raw_response": raw[:5000],
+                "parsed_response": parsed_response[:5000] if isinstance(parsed_response, str) else json.dumps(parsed_response, default=str)[:5000],
+                "duration_ms": duration_ms,
+                "attempt": attempt + 1,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+            return parsed_response
 
         except asyncio.TimeoutError:
             logger.warning("Claude CLI timeout (%ds) on attempt %d", timeout, attempt + 1)
+            _call_log.append({
+                "label": call_label,
+                "model": model,
+                "prompt": prompt,
+                "response": None,
+                "error": f"timeout after {timeout}s",
+                "duration_ms": timeout * 1000,
+                "attempt": attempt + 1,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
             if attempt < max_retries:
                 await asyncio.sleep(5)
                 continue
@@ -174,7 +224,7 @@ async def extract_components_from_text(text: str) -> list[dict]:
         f"Listing text:\n{text[:3000]}"
     )
 
-    response = await _ask_claude(prompt)
+    response = await _ask_claude(prompt, call_label="extract_components")
     result = _parse_json_from_response(response)
     return result if isinstance(result, list) else []
 
@@ -198,7 +248,7 @@ async def extract_red_flags_from_text(text: str) -> list[dict]:
         f"Listing text:\n{text[:3000]}"
     )
 
-    response = await _ask_claude(prompt)
+    response = await _ask_claude(prompt, call_label="extract_red_flags")
     result = _parse_json_from_response(response)
     return result if isinstance(result, list) else []
 
@@ -224,7 +274,7 @@ async def extract_seller_motivation(text: str) -> dict:
         f"Listing text:\n{text[:3000]}"
     )
 
-    response = await _ask_claude(prompt)
+    response = await _ask_claude(prompt, call_label="extract_seller_motivation")
     result = _parse_json_from_response(response)
     return result if isinstance(result, dict) else {}
 
@@ -267,7 +317,7 @@ async def validate_listing_against_county(
         f"COUNTY RECORDS:\n{json.dumps(county_data, default=str)[:2000]}"
     )
 
-    response = await _ask_claude(prompt, timeout=90)
+    response = await _ask_claude(prompt, timeout=90, call_label="validate_listing_vs_county")
     result = _parse_json_from_response(response)
     return result if isinstance(result, dict) else {}
 
@@ -340,7 +390,7 @@ async def generate_property_summary(
         f"{context}"
     )
 
-    response = await _ask_claude(prompt, timeout=90)
+    response = await _ask_claude(prompt, timeout=90, call_label="generate_property_summary")
     result = _parse_json_from_response(response)
     return result if isinstance(result, dict) else {}
 

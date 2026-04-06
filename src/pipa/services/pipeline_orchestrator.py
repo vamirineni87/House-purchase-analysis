@@ -518,8 +518,24 @@ async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     if result.get("validation"):
         ctx.ai_extracted["validation"] = result["validation"]
 
-    # Persist as AnalysisRun
+    # Persist parsed results as AnalysisRun
     await _persist_analysis(db, ctx.property_id, "ai_extraction", result)
+
+    # Persist raw prompts + responses for auditability
+    from pipa.services.ai_extraction import get_call_log
+    call_log = get_call_log()
+    if call_log:
+        from pipa.models.source import SourceRecord
+        sr = SourceRecord(
+            property_id=ctx.property_id,
+            source_name="ai_pass_1_prompts",
+            source_url=None,
+            raw_payload={"calls": call_log},
+            fetched_at=datetime.now(timezone.utc),
+        )
+        db.add(sr)
+        await db.flush()
+        logger.info("AI Pass 1: stored %d prompt/response pairs", len(call_log))
 
     counts = {
         "components": len(result.get("components", [])),
@@ -738,6 +754,23 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
             timeout=45,  # 45 second max — kill if hung
         )
         ctx.math_results["ai_interpretation"] = summary
+        await _persist_analysis(db, ctx.property_id, "ai_interpretation", summary)
+
+        # Store raw prompts + responses
+        from pipa.services.ai_extraction import get_call_log
+        call_log = get_call_log()
+        if call_log:
+            from pipa.models.source import SourceRecord
+            sr = SourceRecord(
+                property_id=ctx.property_id,
+                source_name="ai_pass_2_prompts",
+                source_url=None,
+                raw_payload={"calls": call_log},
+                fetched_at=datetime.now(timezone.utc),
+            )
+            db.add(sr)
+            await db.flush()
+
         return {"has_summary": bool(summary)}
     except asyncio.TimeoutError:
         logger.warning("AI Pass 2: Claude CLI timed out after 45s, skipping")
