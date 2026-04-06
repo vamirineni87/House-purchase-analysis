@@ -186,12 +186,10 @@ function renderPage(container) {
     }).join('');
 
     container.innerHTML = `
-<div class="max-w-7xl mx-auto">
-  ${headerHtml}
-  ${navHtml}
-  <div class="space-y-4 pt-4 pb-8">
-    ${sectionsHtml}
-  </div>
+${headerHtml}
+${navHtml}
+<div class="max-w-7xl mx-auto px-6 space-y-4 pt-4 pb-8">
+  ${sectionsHtml}
 </div>`;
 }
 

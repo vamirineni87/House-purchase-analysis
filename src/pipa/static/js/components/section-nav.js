@@ -28,8 +28,8 @@ export function renderSectionNav() {
         `<button data-section-link="${id}" class="section-nav-link px-3 py-2 text-xs font-medium text-gray-500 hover:text-blue-600 whitespace-nowrap transition-colors border-b-2 border-transparent">${label}</button>`
     ).join('');
 
-    return `<nav id="section-nav" class="sticky top-0 z-10 bg-white border-b border-gray-200 -mx-6 px-6">
-  <div class="flex gap-0 -mb-px overflow-x-auto hide-scrollbar">${links}</div>
+    return `<nav id="section-nav" class="sticky top-0 z-10 bg-white border-b border-gray-200 px-6">
+  <div class="flex flex-wrap gap-0 -mb-px">${links}</div>
 </nav>`;
 }
 
@@ -40,7 +40,8 @@ export function bindSectionNav(container, headerEl) {
     const nav = container.querySelector('#section-nav');
     if (!nav) return;
 
-    // Nav is sticky top-0 within its scroll container, no offset needed
+    // Force layout recalculation so sticky kicks in immediately
+    void nav.offsetHeight;
 
     const scrollContainer = container.closest('#app') || document.querySelector('#app');
     const links = nav.querySelectorAll('[data-section-link]');

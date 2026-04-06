@@ -93,7 +93,7 @@ export function renderHeader(state) {
     }).join('');
 
     return `
-<div id="detail-header" class="bg-white border-b border-gray-200 -mx-6 px-6 py-3">
+<div id="detail-header" class="bg-white border-b border-gray-200 px-6 py-3">
   <div class="flex items-start justify-between gap-4 flex-wrap">
     <div class="min-w-0">
       <div class="flex items-center gap-3 flex-wrap">
