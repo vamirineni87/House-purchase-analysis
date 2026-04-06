@@ -16,7 +16,7 @@ import { showToast } from '../../../toast.js';
 
 export const TITLE = 'Price / Value';
 export const ID = 'price-value';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(_state) { return false; }
 

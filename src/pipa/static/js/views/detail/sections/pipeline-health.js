@@ -16,7 +16,7 @@ import { showToast } from '../../../toast.js';
 
 export const TITLE = 'Pipeline / Data Health';
 export const ID = 'pipeline-health';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(state) {
     const status = state.latestRun?.status;

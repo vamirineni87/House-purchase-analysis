@@ -10,7 +10,7 @@ import { renderBadge } from '../../../components/badge.js';
 
 export const TITLE = 'Schools';
 export const ID = 'schools';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 // ── Auto-expand ────────────────────────────────────────────────────
 

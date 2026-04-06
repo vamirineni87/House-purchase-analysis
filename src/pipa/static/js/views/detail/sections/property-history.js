@@ -12,7 +12,7 @@ import { renderBadge } from '../../../components/badge.js';
 
 export const TITLE = 'Property History';
 export const ID = 'property-history';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(_state) { return false; }
 

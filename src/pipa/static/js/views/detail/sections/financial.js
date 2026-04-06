@@ -12,7 +12,7 @@ import { api } from '../../../api.js';
 
 export const TITLE = 'Financial Analysis';
 export const ID = 'financial';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 // ── Auto-expand logic ──────────────────────────────────────────────
 

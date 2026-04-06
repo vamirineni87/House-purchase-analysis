@@ -12,7 +12,7 @@ import { api } from '../../../api.js';
 
 export const TITLE = 'Condition';
 export const ID = 'condition';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 // ── Auto-expand logic ──────────────────────────────────────────────
 

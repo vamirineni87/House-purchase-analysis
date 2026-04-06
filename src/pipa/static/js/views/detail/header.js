@@ -24,7 +24,7 @@ function pursueVariant(status) {
  * @returns {string} HTML
  */
 export function renderHeader(state) {
-    const { property, listingData, watchEntry, latestRun, decision, packet, actionLoading } = state;
+    const { property, listingData, watchEntry, latestRun, decision, packet, actionLoading, countyData } = state;
     const ld = listingData || {};
 
     // Address
@@ -32,10 +32,25 @@ export function renderHeader(state) {
     const address = currentAddr?.normalized_address || property?.address || 'No address';
     const county = currentAddr?.county || property?.county || '';
 
-    // Price
+    // Prices
     const listPrice = ld.price || packet?.price_view?.list_price || null;
-    const priceHtml = listPrice
-        ? `<span class="text-lg font-bold text-gray-900">${formatCurrency(listPrice)}</span>`
+
+    // County assessed value (latest assessment total_value)
+    const assessments = countyData?.assessments || [];
+    const countyAssessed = assessments.length > 0 ? assessments[0]?.total_value : null;
+    // County +8% (Loudoun assessment ratio is ~92% of market)
+    const countyPlus8 = countyAssessed ? Math.round(countyAssessed * 1.08) : null;
+
+    // Zestimate
+    const zestimate = ld.zestimate || null;
+
+    // Price display: Listed | County+8% | Zestimate
+    const priceItems = [];
+    if (listPrice) priceItems.push(`<span class="text-lg font-bold text-gray-900">${formatCurrency(listPrice)}</span><span class="text-xs text-gray-400 ml-0.5">listed</span>`);
+    if (countyPlus8) priceItems.push(`<span class="text-sm font-semibold text-gray-700">${formatCurrency(countyPlus8)}</span><span class="text-xs text-gray-400 ml-0.5">county+8%</span>`);
+    if (zestimate) priceItems.push(`<span class="text-sm font-semibold text-gray-700">${formatCurrency(zestimate)}</span><span class="text-xs text-gray-400 ml-0.5">zest</span>`);
+    const priceHtml = priceItems.length > 0
+        ? priceItems.join('<span class="text-gray-300 mx-1.5">|</span>')
         : '';
 
     // Pursue signal
@@ -78,7 +93,7 @@ export function renderHeader(state) {
     }).join('');
 
     return `
-<div id="detail-header" class="sticky top-0 z-20 bg-white border-b border-gray-200 -mx-6 px-6 py-3">
+<div id="detail-header" class="bg-white border-b border-gray-200 -mx-6 px-6 py-3">
   <div class="flex items-start justify-between gap-4 flex-wrap">
     <div class="min-w-0">
       <div class="flex items-center gap-3 flex-wrap">

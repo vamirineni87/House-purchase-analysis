@@ -14,7 +14,7 @@ import { api } from '../../../api.js';
 
 export const TITLE = 'Notes & Due Diligence';
 export const ID = 'notes-actions';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(_state) { return false; }
 

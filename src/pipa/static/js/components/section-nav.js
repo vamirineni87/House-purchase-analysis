@@ -28,7 +28,7 @@ export function renderSectionNav() {
         `<button data-section-link="${id}" class="section-nav-link px-3 py-2 text-xs font-medium text-gray-500 hover:text-blue-600 whitespace-nowrap transition-colors border-b-2 border-transparent">${label}</button>`
     ).join('');
 
-    return `<nav id="section-nav" class="sticky z-10 bg-white border-b border-gray-200 -mx-6 px-6">
+    return `<nav id="section-nav" class="sticky top-0 z-10 bg-white border-b border-gray-200 -mx-6 px-6">
   <div class="flex gap-0 -mb-px overflow-x-auto hide-scrollbar">${links}</div>
 </nav>`;
 }
@@ -40,22 +40,16 @@ export function bindSectionNav(container, headerEl) {
     const nav = container.querySelector('#section-nav');
     if (!nav) return;
 
-    const updateNavOffset = () => {
-        if (headerEl) {
-            nav.style.top = headerEl.offsetHeight + 'px';
-        }
-    };
-    updateNavOffset();
-    window.addEventListener('resize', updateNavOffset);
+    // Nav is sticky top-0 within its scroll container, no offset needed
 
-    const scrollContainer = container.closest('#app') || container.closest('main') || document.querySelector('#app');
+    const scrollContainer = container.closest('#app') || document.querySelector('#app');
     const links = nav.querySelectorAll('[data-section-link]');
     for (const link of links) {
         link.addEventListener('click', () => {
             const sectionId = link.getAttribute('data-section-link');
             const target = container.querySelector(`[data-section-id="${sectionId}"]`);
             if (target && scrollContainer) {
-                const offset = (headerEl?.offsetHeight || 0) + (nav.offsetHeight || 0) + 12;
+                const offset = (nav.offsetHeight || 0) + 12;
                 const targetTop = target.offsetTop - offset;
                 scrollContainer.scrollTo({ top: targetTop, behavior: 'smooth' });
             }
@@ -70,7 +64,7 @@ export function bindSectionNav(container, headerEl) {
 
     const observerOpts = {
         root: scrollContainer || null,
-        rootMargin: `-${(headerEl?.offsetHeight || 0) + (nav.offsetHeight || 0) + 20}px 0px -60% 0px`,
+        rootMargin: `-${(nav.offsetHeight || 0) + 20}px 0px -60% 0px`,
         threshold: 0,
     };
 

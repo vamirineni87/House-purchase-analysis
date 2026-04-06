@@ -15,7 +15,7 @@ import { api } from '../../../api.js';
 
 export const TITLE = 'AI Analysis';
 export const ID = 'ai-analysis';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(_state) { return false; }
 

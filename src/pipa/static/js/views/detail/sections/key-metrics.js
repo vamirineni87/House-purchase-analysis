@@ -12,7 +12,7 @@ import { formatCurrency, formatNumber, escapeHtml } from '../../../utils.js';
 
 export const TITLE = 'Key Metrics';
 export const ID = 'key-metrics';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(_state) { return false; }
 

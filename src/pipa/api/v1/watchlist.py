@@ -15,7 +15,7 @@ from pipa.schemas.property import WatchlistEntryCreate, WatchlistEntryResponse, 
 router = APIRouter(tags=["watchlist"])
 
 # For now, use a default user ID (single-user desktop app)
-DEFAULT_USER_ID = "default-user"
+DEFAULT_USER_ID = "85210e37-80b3-4eae-91dc-37ff7ef942a7"
 
 
 @router.get("/watchlist", response_model=list[WatchlistEntryResponse])

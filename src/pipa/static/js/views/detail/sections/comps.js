@@ -14,7 +14,7 @@ import { api } from '../../../api.js';
 
 export const TITLE = 'Comparable Sales';
 export const ID = 'comps';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(state) {
     return !!state.deepComp;

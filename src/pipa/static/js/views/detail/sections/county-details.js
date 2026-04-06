@@ -14,7 +14,7 @@ import { api } from '../../../api.js';
 
 export const TITLE = 'County Details';
 export const ID = 'county-details';
-export const DEFAULT_EXPANDED = true;
+export const DEFAULT_EXPANDED = false;
 
 export function shouldAutoExpand(_state) { return false; }
 
