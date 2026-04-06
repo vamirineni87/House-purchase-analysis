@@ -472,8 +472,13 @@ async def _task_county_scrape(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 
 
 async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """AI PASS 1: unstructured extraction from listing description."""
-    # Try to get description from listing_data if not set directly
+    """AI PASS 1: full extraction from listing + county cross-reference.
+
+    Extracts components, red flags, seller motivation from listing text,
+    then validates listing claims against county records to find discrepancies
+    (sqft, bedrooms, basement, upgrade claims without permits, etc.).
+    """
+    # Get description from listing_data if not set directly
     if not ctx.description and ctx.listing_data:
         ctx.description = ctx.listing_data.get("description", "")
 
@@ -481,12 +486,49 @@ async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         logger.info("AI Pass 1: no description text available")
         return {"skipped": True, "reason": "no description text"}
 
-    from pipa.services.ai_extraction import extract_components_from_text
+    from pipa.services.ai_extraction import extract_all_from_listing
 
-    components = await extract_components_from_text(ctx.description)
-    if components:
-        ctx.ai_extracted["components"] = components
-    return {"components_extracted": len(components) if components else 0}
+    # Build listing facts for cross-reference
+    listing_facts = {}
+    if ctx.listing_data:
+        for key in ("price", "bedrooms", "bathrooms", "sqft", "lot_sqft",
+                     "year_built", "home_type", "hoa_monthly", "description",
+                     "above_grade_sqft", "below_grade_sqft", "basement_sqft"):
+            if ctx.listing_data.get(key) is not None:
+                listing_facts[key] = ctx.listing_data[key]
+
+    # County summary for cross-reference
+    county_summary = None
+    if ctx.county_data:
+        county_summary = ctx.county_data.get("_summary", ctx.county_data)
+
+    result = await extract_all_from_listing(
+        description=ctx.description,
+        listing_facts=listing_facts if listing_facts else None,
+        county_data=county_summary,
+    )
+
+    # Store extracted data
+    if result.get("components"):
+        ctx.ai_extracted["components"] = result["components"]
+    if result.get("red_flags"):
+        ctx.ai_extracted["red_flags"] = result["red_flags"]
+    if result.get("seller_motivation"):
+        ctx.ai_extracted["seller_motivation"] = result["seller_motivation"]
+    if result.get("validation"):
+        ctx.ai_extracted["validation"] = result["validation"]
+
+    # Persist as AnalysisRun
+    await _persist_analysis(db, ctx.property_id, "ai_extraction", result)
+
+    counts = {
+        "components": len(result.get("components", [])),
+        "red_flags": len(result.get("red_flags", [])),
+        "has_validation": bool(result.get("validation")),
+        "has_motivation": bool(result.get("seller_motivation")),
+    }
+    logger.info("AI Pass 1: %s", counts)
+    return counts
 
 
 async def _task_resolver(ctx: _ExecutionContext, db: AsyncSession) -> dict:
