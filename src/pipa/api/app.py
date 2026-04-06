@@ -93,6 +93,14 @@ def create_app() -> FastAPI:
         db_ok = await healthcheck(engine)
         return {"status": "ok" if db_ok else "degraded", "db": db_ok}
 
+    # ── No-cache for JS files during development ─────────────────────
+    @app.middleware("http")
+    async def no_cache_js(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/js/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
+
     # ── Static file serving (AFTER all API routes) ───────────────────
     @app.get("/")
     async def serve_index():
