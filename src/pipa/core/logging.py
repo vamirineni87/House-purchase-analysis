@@ -18,12 +18,21 @@ def setup_logging(level: str = "INFO"):
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
 
+    # Also log to file for post-mortem debugging
+    from pathlib import Path
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    file_handler = logging.FileHandler(log_dir / "backend.log", mode="a", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+
     root = logging.getLogger("pipa")
     root.setLevel(log_level)
     root.addHandler(handler)
+    root.addHandler(file_handler)
 
-    # Debug comp service for cache troubleshooting
+    # Debug comp service and scrapers for troubleshooting
     logging.getLogger("pipa.services.comp_service").setLevel(logging.DEBUG)
+    logging.getLogger("pipa.clients.scrapers").setLevel(logging.DEBUG)
 
     # Quiet noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

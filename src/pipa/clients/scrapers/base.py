@@ -51,16 +51,50 @@ class BaseScraper:
     # ------------------------------------------------------------------
 
     async def _ensure_browser(self):
-        """Launch Playwright browser if not already running."""
+        """Launch Playwright browser if not already running.
+
+        Applies anti-bot measures:
+        - Disables AutomationControlled blink feature
+        - Overrides navigator.webdriver
+        - Sets realistic viewport and user agent
+        """
         if self._browser is None:
             from playwright.async_api import async_playwright
 
+            logger.debug("Launching browser (headless=%s)", self.headless)
             self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=self.headless)
-            self._context = await self._browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            self._browser = await self._pw.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
             )
+            logger.debug("Browser launched, creating context (1920x1080, Chrome/131)")
+            self._context = await self._browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
+            logger.debug("Context created, injecting stealth scripts")
+            # Override navigator.webdriver to hide automation
+            await self._context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                // Hide chrome.runtime to appear as a real browser
+                window.chrome = { runtime: {} };
+                // Override permissions query
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) =>
+                    parameters.name === 'notifications'
+                        ? Promise.resolve({ state: Notification.permission })
+                        : originalQuery(parameters);
+            """)
 
     async def close(self):
         """Shut down the browser and Playwright."""
@@ -73,6 +107,55 @@ class BaseScraper:
         if hasattr(self, "_pw") and self._pw:
             await self._pw.stop()
             self._pw = None
+
+    # ------------------------------------------------------------------
+    # Cookie loading
+    # ------------------------------------------------------------------
+
+    async def _load_cookies_from_file(self, cookie_file: Path, domain_filter: str = ""):
+        """Load cookies from a Netscape HTTP Cookie File into the browser context.
+
+        Args:
+            cookie_file: Path to exported cookies.txt (Netscape format).
+            domain_filter: Only load cookies matching this domain (e.g. '.zillow.com').
+        """
+        if not cookie_file.exists():
+            logger.warning("Cookie file not found: %s", cookie_file)
+            return 0
+
+        cookies = []
+        with open(cookie_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 7:
+                    continue
+                domain, _, path, secure, expires, name, value = parts[:7]
+                if domain_filter and domain_filter not in domain:
+                    continue
+                cookie = {
+                    "name": name,
+                    "value": value,
+                    "domain": domain,
+                    "path": path,
+                    "secure": secure.upper() == "TRUE",
+                    "httpOnly": False,
+                }
+                # Handle expiry (0 = session cookie)
+                try:
+                    exp = int(expires)
+                    if exp > 0:
+                        cookie["expires"] = exp
+                except ValueError:
+                    pass
+                cookies.append(cookie)
+
+        if cookies and self._context:
+            await self._context.add_cookies(cookies)
+            logger.info("Loaded %d cookies from %s", len(cookies), cookie_file.name)
+        return len(cookies)
 
     # ------------------------------------------------------------------
     # Rate limiting

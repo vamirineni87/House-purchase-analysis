@@ -79,11 +79,11 @@ export function renderHeader(state) {
 
     // Action buttons (compact)
     const anyLoading = actionLoading !== null;
-    const btn = (id, label) => {
+    const btn = (id, label, tooltip) => {
         const loading = actionLoading === id;
         const disabled = anyLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200';
         const spinner = loading ? '<span class="animate-spin inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full mr-1"></span>' : '';
-        return `<button id="${id}" class="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-md ${disabled} transition-colors" ${anyLoading ? 'disabled' : ''}>${spinner}${escapeHtml(label)}</button>`;
+        return `<button id="${id}" title="${escapeHtml(tooltip)}" class="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-md ${disabled} transition-colors" ${anyLoading ? 'disabled' : ''}>${spinner}${escapeHtml(label)}</button>`;
     };
 
     // Stage selector
@@ -92,6 +92,14 @@ export function renderHeader(state) {
         return `<option value="${s}" ${selected}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`;
     }).join('');
 
+    // Zillow link
+    const zillowUrl = ld._url || ld.listing_url || ld.url || '';
+    const zillowLinkHtml = zillowUrl
+        ? `<a href="${escapeHtml(zillowUrl)}" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-600 transition-colors" title="View on Zillow">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+           </a>`
+        : '';
+
     return `
 <div id="detail-header" class="bg-white border-b border-gray-200 py-3">
   <div class="flex items-start justify-between gap-4 flex-wrap">
@@ -99,6 +107,7 @@ export function renderHeader(state) {
       <div class="flex items-center gap-3 flex-wrap">
         <a href="#properties" class="text-gray-400 hover:text-blue-600">&larr;</a>
         <h1 class="text-xl font-bold text-gray-900">${escapeHtml(address)}</h1>
+        ${zillowLinkHtml}
       </div>
       <div class="flex items-center gap-3 mt-1 text-sm text-gray-600 flex-wrap">
         ${priceHtml}
@@ -109,11 +118,13 @@ export function renderHeader(state) {
       </div>
     </div>
     <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
-      ${btn('action-run-pipeline', 'Pipeline')}
-      ${btn('action-refresh-listing', 'Listing')}
-      ${btn('action-refresh-county', 'County')}
-      ${btn('action-deep-comp', 'Deep Comp')}
-      ${btn('action-rerun-ai', 'AI')}
+      ${btn('action-refresh-all', 'Refresh All', 'Re-scrape Zillow + County + Schools, then run full analysis pipeline')}
+      ${btn('action-run-pipeline', 'Analyze', 'Run analysis on cached data — AI, financial, condition, warnings, decision')}
+      ${btn('action-refresh-listing', 'Zillow', 'Re-scrape Zillow listing for latest price, DOM, description')}
+      ${btn('action-refresh-county', 'County', 'Re-scrape county records — assessments, permits, deeds, components')}
+      ${btn('action-refresh-schools', 'Schools', 'Re-scrape LCPS school boundary assignments')}
+      ${btn('action-deep-comp', 'Deep Comp', 'Find neighborhood sales → scrape each from County + Zillow → appraisal + AI value opinion (~10 min)')}
+      ${btn('action-rerun-ai', 'Rerun AI', 'Re-run AI Pass 1 (extraction) + Pass 2 (narrative) on existing data')}
       <select id="stage-select" class="text-xs border border-gray-300 rounded px-2 py-1.5">
         <option value="" disabled ${!watchEntry ? 'selected' : ''}>${watchEntry ? 'Stage...' : 'Watchlist'}</option>
         ${stageOptions}
@@ -131,7 +142,8 @@ export function bindHeader(container, state, handlers) {
 
     // Action buttons
     const actionIds = [
-        'action-run-pipeline', 'action-refresh-listing', 'action-refresh-county',
+        'action-refresh-all', 'action-run-pipeline',
+        'action-refresh-listing', 'action-refresh-county', 'action-refresh-schools',
         'action-deep-comp', 'action-rerun-ai',
     ];
     for (const id of actionIds) {

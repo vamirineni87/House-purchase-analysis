@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -165,11 +165,44 @@ async def get_analysis_results(property_id: str, db: AsyncSession = Depends(get_
 
 @router.delete("/properties/{property_id}", status_code=204)
 async def delete_property(property_id: str, db: AsyncSession = Depends(get_db)):
-    """Delete a property."""
+    """Delete a property and ALL associated data."""
+    from sqlalchemy import delete as sql_delete
     result = await db.execute(select(Property).where(Property.id == property_id))
     prop = result.scalar_one_or_none()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
+
+    # Delete pipeline_task_run first (references pipeline_run)
+    await db.execute(
+        text("""DELETE FROM pipeline_task_run WHERE pipeline_run_id IN
+                (SELECT id FROM pipeline_run WHERE property_id = :pid)"""),
+        {"pid": property_id},
+    )
+
+    # Delete from ALL tables with property_id FK
+    tables_with_property_fk = [
+        "address_history", "alert_event", "analysis_run",
+        "assessment_snapshot", "component_system", "decision_case",
+        "deed_record", "development_case", "document",
+        "due_diligence_item", "evidence_item", "extracted_fact",
+        "geometry_snapshot", "hazard_profile", "insurance_quote",
+        "listing_episode", "listing_page_snapshot", "mortgage_quote",
+        "overlay_intersection", "parcel", "parcel_event",
+        "parcel_identifier", "permit_record", "photo_asset",
+        "pipeline_run", "plat_record", "property_community_membership",
+        "property_note", "property_tag", "recommendation_snapshot",
+        "refresh_job", "repair_estimate", "sale_event",
+        "source_record", "watchlist_entry", "zoning_case", "zoning_record",
+    ]
+    for table_name in tables_with_property_fk:
+        try:
+            await db.execute(
+                text(f"DELETE FROM {table_name} WHERE property_id = :pid"),
+                {"pid": property_id},
+            )
+        except Exception:
+            pass
+
     await db.delete(prop)
 
 
@@ -183,6 +216,10 @@ async def ingest_property(body: PropertyIngestRequest, db: AsyncSession = Depend
     from pipa.services.listing_ingest import ListingIngestService
 
     config = get_config()
+    logger.info("Ingest request: url=%s, address=%s, type=%s",
+                body.url, body.address, body.property_type)
+    logger.debug("Config: storage_dir=%s, headless=%s",
+                config.storage_dir, config.scrapers.playwright_headless)
     service = ListingIngestService(
         storage_dir=config.storage_dir,
         headless=config.scrapers.playwright_headless,
@@ -192,6 +229,7 @@ async def ingest_property(body: PropertyIngestRequest, db: AsyncSession = Depend
         if body.url:
             # Validate URL source before attempting scrape
             source = service.detect_source(body.url)
+            logger.debug("Detected source: %s", source)
             if source == "unknown":
                 raise HTTPException(
                     status_code=400,
@@ -232,9 +270,12 @@ async def ingest_property(body: PropertyIngestRequest, db: AsyncSession = Depend
                 detail="At least one of 'url' or 'address' must be provided",
             )
     except ValueError as e:
+        logger.warning("Ingest ValueError: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        logger.exception("Failed to ingest property")
-        raise HTTPException(status_code=500, detail="Failed to ingest property from listing")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to ingest property: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to ingest property from listing: {exc}")
     finally:
         await service.close()

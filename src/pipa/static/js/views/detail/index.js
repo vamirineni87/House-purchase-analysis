@@ -375,32 +375,66 @@ async function lazyLoadAll() {
 
 async function handleAction(actionId, container) {
     const actionMap = {
+        'action-refresh-all': async () => {
+            // Step 1: Refresh Zillow listing
+            showToast('Refreshing listing...', 'info');
+            try {
+                await api.refreshSource(_state.propertyId, 'zillow');
+                const ld = await api.getListingData(_state.propertyId);
+                _state.listingData = ld.listing_data || ld || {};
+            } catch (e) {
+                showToast('Listing refresh failed: ' + (e.message || ''), 'error');
+            }
+
+            // Step 2: Refresh county + schools in parallel
+            showToast('Refreshing county + schools...', 'info');
+            try {
+                await Promise.allSettled([
+                    api.refreshCountyData(_state.propertyId),
+                    api.refreshSource(_state.propertyId, 'schools'),
+                ]);
+                _state.countyData = await api.getCountyData(_state.propertyId);
+                try {
+                    const schoolData = await fetch(`/api/v1/properties/${_state.propertyId}/schools`).then(r => r.json());
+                    if (schoolData?.lcps_schools) _state.lcpsSchools = schoolData.lcps_schools;
+                    if (schoolData?.cross_reference) _state.schoolCrossRef = schoolData.cross_reference;
+                } catch { /* ignore */ }
+            } catch (e) {
+                showToast('County refresh failed: ' + (e.message || ''), 'error');
+            }
+
+            // Step 3: Run full pipeline (now uses fresh cached data)
+            showToast('Running analysis pipeline...', 'info');
+            const run = await api.runPipeline(_state.propertyId, 'full_pipeline');
+            _state.latestRun = run;
+            _state.pipelineRuns = [run, ..._state.pipelineRuns];
+            showToast('Refresh all complete', 'success');
+        },
         'action-run-pipeline': async () => {
             const run = await api.runPipeline(_state.propertyId, 'full_pipeline');
             _state.latestRun = run;
             _state.pipelineRuns = [run, ..._state.pipelineRuns];
-            showToast('Pipeline started', 'success');
+            showToast('Analysis started', 'success');
         },
         'action-refresh-listing': async () => {
             await api.refreshSource(_state.propertyId, 'zillow');
             const ld = await api.getListingData(_state.propertyId);
             _state.listingData = ld.listing_data || ld || {};
-            showToast('Listing refreshed', 'success');
+            showToast('Zillow listing refreshed', 'success');
         },
         'action-refresh-county': async () => {
-            // Refresh county + schools in parallel
-            const [countyRes, schoolRes] = await Promise.allSettled([
-                api.refreshCountyData(_state.propertyId),
-                api.refreshSource(_state.propertyId, 'schools'),
-            ]);
+            await api.refreshCountyData(_state.propertyId);
             _state.countyData = await api.getCountyData(_state.propertyId);
-            // Reload school data
+            showToast('County records refreshed', 'success');
+        },
+        'action-refresh-schools': async () => {
+            await api.refreshSource(_state.propertyId, 'schools');
             try {
                 const schoolData = await fetch(`/api/v1/properties/${_state.propertyId}/schools`).then(r => r.json());
                 if (schoolData?.lcps_schools) _state.lcpsSchools = schoolData.lcps_schools;
                 if (schoolData?.cross_reference) _state.schoolCrossRef = schoolData.cross_reference;
             } catch { /* ignore */ }
-            showToast('County + schools refreshed', 'success');
+            showToast('Schools refreshed', 'success');
         },
         'action-deep-comp': async () => {
             const result = await api.runCompsDeep(_state.propertyId);

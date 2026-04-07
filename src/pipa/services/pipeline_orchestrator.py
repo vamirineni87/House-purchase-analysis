@@ -404,6 +404,32 @@ class _ExecutionContext:
         self.warnings: list[str] = []
 
 
+async def _persist_analysis(
+    db: AsyncSession,
+    property_id: str,
+    analysis_type: str,
+    output: dict,
+) -> None:
+    """Persist an analysis result as an AnalysisRun record."""
+    import hashlib
+    import json as _json
+    from pipa.models.analysis_models import AnalysisRun
+
+    run = AnalysisRun(
+        property_id=property_id,
+        analysis_type=analysis_type,
+        ruleset_version="1.0.0",
+        code_version="0.1.0",
+        input_snapshot_hash=hashlib.sha256(
+            _json.dumps(output, default=str).encode()
+        ).hexdigest(),
+        output_json=output,
+    )
+    db.add(run)
+    await db.flush()
+    logger.debug("Persisted %s analysis for property %s", analysis_type, property_id)
+
+
 async def _execute_task(
     task_name: str,
     ctx: _ExecutionContext,
@@ -789,7 +815,7 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
             school_result = await db.execute(
                 select(SourceRecord).where(
                     SourceRecord.property_id == ctx.property_id,
-                    SourceRecord.source_name == "lcps_schools",
+                    SourceRecord.source_name == "lcps_official",
                 ).order_by(SourceRecord.fetched_at.desc()).limit(1)
             )
             school_record = school_result.scalar_one_or_none()
@@ -868,7 +894,25 @@ async def _task_decision_packet(ctx: _ExecutionContext, db: AsyncSession) -> dic
 
 
 async def _task_school_lookup(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """LCPS school boundary lookup and cross-reference with Zillow."""
+    """LCPS school boundary lookup — uses cached data if available, scrapes only if missing."""
+    from pipa.models.source import SourceRecord
+
+    # Check for cached school data first (same pattern as zillow/county)
+    result = await db.execute(
+        select(SourceRecord).where(
+            SourceRecord.property_id == ctx.property_id,
+            SourceRecord.source_name == "lcps_official",
+        ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+    )
+    cached = result.scalar_one_or_none()
+    if cached and cached.raw_payload:
+        data = cached.raw_payload
+        schools_found = sum(1 for k in ("elementary", "middle", "high") if data.get(k))
+        logger.info("School lookup: using cached data (%d schools found)", schools_found)
+        return {"schools_found": schools_found, "source": "cached"}
+
+    # No cached data — scrape fresh
+    logger.info("School lookup: no cached data, scraping LCPS...")
     from pipa.services.school_service import SchoolService
 
     try:
@@ -884,6 +928,7 @@ async def _task_school_lookup(ctx: _ExecutionContext, db: AsyncSession) -> dict:
             "schools_found": schools_found,
             "mismatches": len(xref.get("mismatches", [])),
             "boundary_change": xref.get("boundary_change_warning", False),
+            "source": "fresh_scrape",
         }
     except Exception as e:
         logger.exception("School lookup failed")

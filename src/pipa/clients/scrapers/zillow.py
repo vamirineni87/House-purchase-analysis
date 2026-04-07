@@ -100,26 +100,66 @@ class ZillowScraper(BaseScraper):
         page.on("response", _capture_response)
 
         try:
+            import random
+
+            # --- Load cookies from exported browser session ---
+            cookie_file = Path("www.zillow.com_cookies.txt")
+            if cookie_file.exists():
+                logger.debug("Found cookie file: %s", cookie_file.resolve())
+                await self._load_cookies_from_file(cookie_file, domain_filter="zillow.com")
+            else:
+                logger.debug("No cookie file found at %s", cookie_file.resolve())
+
             # --- Navigate ---
             logger.info("Scraping Zillow: %s", url)
+            logger.debug("Pre-nav mouse movement")
+            await page.mouse.move(
+                random.randint(100, 800), random.randint(100, 400)
+            )
+
+            logger.debug("Navigating to URL...")
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            await page.wait_for_timeout(10000)
+            logger.debug("Page loaded, current URL: %s", page.url)
+            logger.debug("Page title: %s", await page.title())
+            wait_ms = random.randint(3000, 6000)
+            logger.debug("Waiting %dms before CAPTCHA check", wait_ms)
+            await page.wait_for_timeout(wait_ms)
 
             # --- CAPTCHA handling ---
+            logger.debug("Checking for CAPTCHA...")
             await self._handle_captcha(page)
+            logger.debug("Post-CAPTCHA URL: %s, title: %s", page.url, await page.title())
 
-            # --- Scroll to trigger lazy API calls ---
+            # --- Human-like scrolling to trigger lazy API calls ---
+            logger.debug("Starting scroll sequence (8 steps)")
             for i in range(8):
                 try:
-                    await page.evaluate(f"window.scrollTo(0, {(i + 1) * 800})")
-                    await page.wait_for_timeout(800)
+                    scroll_y = (i + 1) * random.randint(600, 1000)
+                    await page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                    await page.wait_for_timeout(random.randint(500, 1200))
                 except Exception:
+                    logger.debug("Scroll interrupted at step %d", i)
                     await page.wait_for_timeout(2000)
                     break
-            await page.wait_for_timeout(5000)
+            logger.debug("Scroll complete, captured %d GraphQL responses so far", len(graphql_bodies))
+            await page.wait_for_timeout(random.randint(3000, 6000))
+            logger.debug("Final GraphQL response count: %d", len(graphql_bodies))
 
             # --- Get page HTML for fallback ---
             html = await page.content()
+            logger.debug("Page HTML length: %d chars", len(html))
+
+            # Check for bot detection in HTML
+            if "captcha" in html.lower() or "blocked" in html.lower() or "access denied" in html.lower():
+                logger.warning("Bot detection keywords found in page HTML")
+                # Save a debug screenshot always when bot detected
+                try:
+                    debug_path = Path("storage/debug_bot_detected.png")
+                    debug_path.parent.mkdir(parents=True, exist_ok=True)
+                    await page.screenshot(path=str(debug_path), full_page=True)
+                    logger.info("Bot detection screenshot saved to %s", debug_path)
+                except Exception as e:
+                    logger.warning("Failed to save debug screenshot: %s", e)
 
             # Save HTML snapshot
             if save_html_dir:
@@ -129,6 +169,7 @@ class ZillowScraper(BaseScraper):
                 path = save_html_dir / fname
                 path.write_text(html, encoding="utf-8")
                 result["_raw_html_path"] = str(path)
+                logger.debug("Saved HTML snapshot: %s", path)
 
             # Save screenshot
             if save_screenshot_dir:
@@ -138,45 +179,63 @@ class ZillowScraper(BaseScraper):
                 path = save_screenshot_dir / fname
                 await page.screenshot(path=str(path), full_page=True)
                 result["_screenshot_path"] = str(path)
+                logger.debug("Saved screenshot: %s", path)
 
             # ==============================================
             # Layer 1: GraphQL interception (PRIMARY)
             # ==============================================
+            logger.debug("Extracting from %d GraphQL responses...", len(graphql_bodies))
             graphql_data = self._extract_from_graphql(graphql_bodies)
             if graphql_data:
                 result.update(graphql_data)
                 result["_extraction_method"] = "graphql"
-                logger.info("GraphQL extraction: %d fields", len(graphql_data))
+                logger.info("GraphQL extraction: %d fields (keys: %s)", len(graphql_data),
+                           ", ".join(sorted(graphql_data.keys())[:15]))
+            else:
+                logger.warning("GraphQL extraction returned NO data from %d responses", len(graphql_bodies))
 
             # ==============================================
             # Layer 2: JSON-LD (fills gaps)
             # ==============================================
+            logger.debug("Extracting from JSON-LD...")
             jsonld_data = self._extract_from_jsonld(html)
             if jsonld_data:
+                filled = 0
                 for k, v in jsonld_data.items():
                     if k not in result or result[k] is None:
                         result[k] = v
+                        filled += 1
                 if "_extraction_method" not in result:
                     result["_extraction_method"] = "jsonld"
+                logger.debug("JSON-LD filled %d fields (total: %d)", filled, len(jsonld_data))
+            else:
+                logger.debug("JSON-LD returned no data")
 
             # ==============================================
             # Layer 3: HTML DOM parsing (fills remaining gaps)
             # ==============================================
+            logger.debug("Extracting from HTML DOM...")
             html_data = self._extract_from_html(html)
             if html_data:
+                filled = 0
                 for k, v in html_data.items():
                     if k not in result or result[k] is None:
                         result[k] = v
+                        filled += 1
                 if "_extraction_method" not in result:
                     result["_extraction_method"] = "html_fallback"
+                logger.debug("HTML DOM filled %d fields (total: %d)", filled, len(html_data))
+            else:
+                logger.debug("HTML DOM returned no data")
 
             # Clean up None values
             result = {k: v for k, v in result.items() if v is not None}
 
             logger.info(
-                "Zillow scrape complete: %d fields via %s",
+                "Zillow scrape complete: %d fields via %s (price=%s, beds=%s, sqft=%s)",
                 len(result),
                 result.get("_extraction_method", "unknown"),
+                result.get("price"), result.get("bedrooms"), result.get("sqft"),
             )
             return result
 
@@ -222,8 +281,28 @@ class ZillowScraper(BaseScraper):
         get its bounding box (which is in main-page coordinates), then
         press-and-hold with the main page mouse for 10-12 seconds.
         """
+        import random
+
         for attempt in range(max_attempts):
             captcha_el = None
+
+            # Check for various bot detection pages
+            page_title = await page.title()
+            page_url = page.url
+            logger.debug("CAPTCHA check — title: %r, url: %s", page_title, page_url)
+
+            # Check for Cloudflare or other challenge pages
+            content_sample = await page.evaluate("document.body?.innerText?.substring(0, 500) || ''")
+            if any(kw in content_sample.lower() for kw in ["access denied", "blocked", "robot", "unusual traffic"]):
+                logger.warning("Bot detection page detected: %s", content_sample[:200])
+                # Save screenshot for debugging
+                try:
+                    debug_path = Path("storage/debug_captcha.png")
+                    debug_path.parent.mkdir(parents=True, exist_ok=True)
+                    await page.screenshot(path=str(debug_path))
+                    logger.info("Saved CAPTCHA debug screenshot to %s", debug_path)
+                except Exception:
+                    pass
 
             # Search inside iframes for #px-captcha
             for frame in page.frames:
@@ -260,17 +339,21 @@ class ZillowScraper(BaseScraper):
                 cy = box["y"] + box["height"] / 2 + 30
 
             logger.info(
-                "CAPTCHA attempt %d: pressing at (%.0f, %.0f) for 12s",
+                "CAPTCHA attempt %d: pressing at (%.0f, %.0f) for ~12s",
                 attempt + 1, cx, cy,
             )
 
-            # Human-like mouse movement then press-and-hold
-            await page.mouse.move(cx - 30, cy - 15)
-            await page.wait_for_timeout(200)
-            await page.mouse.move(cx, cy)
-            await page.wait_for_timeout(300)
+            # Human-like mouse movement with randomization
+            await page.mouse.move(
+                cx - random.randint(20, 50),
+                cy - random.randint(10, 30),
+            )
+            await page.wait_for_timeout(random.randint(150, 400))
+            await page.mouse.move(cx + random.randint(-3, 3), cy + random.randint(-3, 3))
+            await page.wait_for_timeout(random.randint(200, 500))
             await page.mouse.down()
-            await page.wait_for_timeout(12000)
+            # Hold for 10-14 seconds (randomized)
+            await page.wait_for_timeout(random.randint(10000, 14000))
             await page.mouse.up()
 
             # Wait for page to potentially reload
@@ -278,7 +361,7 @@ class ZillowScraper(BaseScraper):
                 await page.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception:
                 pass
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(random.randint(4000, 7000))
 
             # Check if cleared
             still_there = None
@@ -296,7 +379,7 @@ class ZillowScraper(BaseScraper):
 
             if not still_there:
                 logger.info("CAPTCHA cleared on attempt %d", attempt + 1)
-                await page.wait_for_timeout(8000)  # Let content load
+                await page.wait_for_timeout(random.randint(5000, 10000))
                 return
 
             logger.warning("CAPTCHA still present after attempt %d", attempt + 1)

@@ -88,6 +88,14 @@ function runStatusLabel(status) {
     return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function zillowLink(ld) {
+    const url = ld?._url || ld?.listing_url || ld?.url || '';
+    if (!url) return '';
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-600 transition-colors" title="View on Zillow" onclick="event.stopPropagation()">
+        <svg class="w-4 h-4 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+    </a>`;
+}
+
 // ---------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------
@@ -118,18 +126,23 @@ export function render(container) {
             const badge = renderBadge(runStatusLabel(run?.status), runStatusBadgeVariant(run?.status || ''), 'sm');
 
             return `
-            <a href="#property/${p.id}" class="block bg-white border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
-                <div class="text-sm font-medium text-gray-900 mb-1">${escapeHtml(p.address || 'No address')}</div>
-                <div class="flex items-center gap-3 text-xs text-gray-600 mb-2">
-                    <span class="font-semibold text-gray-900">${fmtPrice(ld.price)}</span>
-                    <span>${fmtNum(ld.bedrooms || ld.beds)}bd/${fmtNum(ld.bathrooms || ld.baths)}ba</span>
-                    <span>${fmtNum(ld.sqft)} sf</span>
-                </div>
-                <div class="flex items-center gap-2 flex-wrap">
-                    ${badge}
-                    <span class="text-xs text-gray-400 ml-auto">${formatDate(p.created_at)}</span>
-                </div>
-            </a>`;
+            <div class="bg-white border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors relative">
+                <a href="#property/${p.id}" class="block">
+                    <div class="text-sm font-medium text-gray-900 mb-1">${escapeHtml(p.address || 'No address')} ${zillowLink(ld)}</div>
+                    <div class="flex items-center gap-3 text-xs text-gray-600 mb-2">
+                        <span class="font-semibold text-gray-900">${fmtPrice(ld.price)}</span>
+                        <span>${fmtNum(ld.bedrooms || ld.beds)}bd/${fmtNum(ld.bathrooms || ld.baths)}ba</span>
+                        <span>${fmtNum(ld.sqft)} sf</span>
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        ${badge}
+                        <span class="text-xs text-gray-400 ml-auto">${formatDate(p.created_at)}</span>
+                    </div>
+                </a>
+                <button data-delete-id="${escapeHtml(p.id)}" class="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition-colors p-1" title="Delete property">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+            </div>`;
         }).join('');
 
         // Desktop table rows
@@ -144,7 +157,7 @@ export function render(container) {
             return `
             <tr class="hover:bg-gray-50 cursor-pointer" data-property-id="${escapeHtml(p.id)}">
                 <td class="px-3 py-2.5">
-                    <div class="font-medium text-gray-900 text-sm">${escapeHtml(p.address || 'No address')}</div>
+                    <div class="font-medium text-gray-900 text-sm">${escapeHtml(p.address || 'No address')} ${zillowLink(ld)}</div>
                     <div class="text-xs text-gray-400">${escapeHtml(p.county || '')} &middot; ${escapeHtml((p.property_type || '').replace(/_/g, ' '))}</div>
                 </td>
                 <td class="px-3 py-2.5 text-sm font-semibold text-gray-900 text-right">${fmtPrice(ld.price)}</td>
@@ -155,6 +168,11 @@ export function render(container) {
                 <td class="px-3 py-2.5 text-sm text-gray-700 text-right">${ld.sqft ? Number(ld.sqft).toLocaleString() : '--'}</td>
                 <td class="px-3 py-2.5 text-sm text-gray-700 text-center">${dom != null ? dom : '--'}</td>
                 <td class="px-3 py-2.5">${badge}</td>
+                <td class="px-3 py-2.5 text-center">
+                    <button data-delete-id="${escapeHtml(p.id)}" class="text-gray-300 hover:text-red-500 transition-colors p-1" title="Delete property">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </button>
+                </td>
             </tr>`;
         }).join('');
 
@@ -176,6 +194,7 @@ export function render(container) {
                         <th class="px-3 py-2.5 font-medium text-right">Sqft</th>
                         <th class="px-3 py-2.5 font-medium text-center">DOM</th>
                         <th class="px-3 py-2.5 font-medium">Status</th>
+                        <th class="px-3 py-2.5 font-medium text-center w-10"></th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100">${tableRows}</tbody>
@@ -205,9 +224,34 @@ export function bind(container) {
     }
 
     container.querySelectorAll('[data-property-id]').forEach(row => {
-        row.addEventListener('click', () => {
+        row.addEventListener('click', (e) => {
+            // Don't navigate if delete button was clicked
+            if (e.target.closest('[data-delete-id]')) return;
             const id = row.getAttribute('data-property-id');
             window.location.hash = `#property/${id}`;
+        });
+    });
+
+    // Delete buttons
+    container.querySelectorAll('[data-delete-id]').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const id = btn.getAttribute('data-delete-id');
+            const prop = _data.properties.find(p => p.id === id);
+            const addr = prop?.address || 'this property';
+            if (!confirm(`Delete "${addr}" and all its data? This cannot be undone.`)) return;
+
+            btn.disabled = true;
+            try {
+                await api.deleteProperty(id);
+                showToast('Property deleted', 'success');
+                // Reload the list
+                await load(container);
+            } catch (err) {
+                showToast('Delete failed: ' + (err.message || 'unknown'), 'error');
+                btn.disabled = false;
+            }
         });
     });
 }

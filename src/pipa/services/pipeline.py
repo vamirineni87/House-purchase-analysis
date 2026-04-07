@@ -259,8 +259,41 @@ def _resolve_canonical(
             set_canonical(canonical_key, val, "listing", rank)
 
     # --- AI-extracted components (rank 30) ---
+    # Normalize AI component names to standard keys used by condition scoring
+    _COMPONENT_ALIASES = {
+        "roof": "roof",
+        "roof_asphalt_shingle": "roof",
+        "roof_shingle": "roof",
+        "hvac": "hvac",
+        "hvac_system": "hvac",
+        "hvac_system_(x2)": "hvac",
+        "hvac_(x2)": "hvac",
+        "hvac_heat_pump": "hvac",
+        "central_air": "hvac",
+        "heating": "hvac",
+        "cooling": "hvac",
+        "air_conditioning": "hvac",
+        "furnace": "hvac",
+        "water_heater": "water_heater",
+        "water_heater_tank": "water_heater",
+        "hot_water_heater": "water_heater",
+        "electrical_panel": "electrical_panel",
+        "electrical": "electrical_panel",
+        "panel": "electrical_panel",
+        "windows": "windows",
+        "window": "windows",
+        "appliances": "appliances",
+        "kitchen_appliances": "appliances",
+        "fence": "fence",
+        "fencing": "fence",
+        "siding": "siding",
+        "exterior": "siding",
+        "driveway": "driveway",
+        "garage_door": "garage_door",
+    }
     for comp in ai_extracted.get("components", []):
-        component_name = comp.get("component", "").lower().replace(" ", "_")
+        raw_name = comp.get("component", "").lower().replace(" ", "_")
+        component_name = _COMPONENT_ALIASES.get(raw_name, raw_name)
         year = comp.get("year")
         confidence = comp.get("confidence", "low")
 

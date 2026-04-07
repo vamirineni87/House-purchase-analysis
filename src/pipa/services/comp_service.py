@@ -391,7 +391,7 @@ class CompService:
                 school_result = await db.execute(
                     select(SourceRecord).where(
                         SourceRecord.property_id == property_id,
-                        SourceRecord.source_name == "lcps_schools",
+                        SourceRecord.source_name == "lcps_official",
                     ).order_by(SourceRecord.fetched_at.desc()).limit(1)
                 )
                 school_record = school_result.scalar_one_or_none()
@@ -1091,7 +1091,7 @@ class CompService:
                 if comp_street and not comp_street.isdigit():
                     try:
                         from pipa.clients.scrapers.zillow import ZillowScraper
-                        zillow_scraper = ZillowScraper(headless=True)
+                        zillow_scraper = ZillowScraper(headless=False)
                         try:
                             zillow_data = await zillow_scraper.scrape_by_address(
                                 comp_street, city="", state="VA"

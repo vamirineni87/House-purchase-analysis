@@ -82,17 +82,29 @@ class ListingIngestService:
             ValueError: If URL source cannot be detected.
         """
         source_site = self.detect_source(url)
+        logger.debug("Detected source: %s for URL: %s", source_site, url)
         if source_site == "unknown":
             raise ValueError(f"Cannot detect listing source from URL: {url}")
 
         # Scrape the page
+        logger.info("Starting scrape for %s listing: %s", source_site, url)
         scraped = await self._scrape(source_site, url)
+        logger.info("Scrape returned %d fields, extraction_method=%s",
+                    len(scraped), scraped.get("_extraction_method", "none"))
+        logger.debug("Scraped keys: %s", sorted(scraped.keys()))
+
+        if scraped.get("_error"):
+            logger.error("Scraper returned error: %s", scraped["_error"])
 
         now = datetime.now(timezone.utc)
 
         # Build an address string for property resolution
         address_str = self._build_address_string(scraped)
+        logger.debug("Built address string: %r from scraped address: %r",
+                     address_str, scraped.get("address"))
         if not address_str:
+            logger.error("No usable address extracted. Scraped data keys: %s",
+                        sorted(scraped.keys()))
             raise ValueError("Scraper did not extract a usable address from the listing page")
 
         # Resolve or create property
@@ -157,18 +169,48 @@ class ListingIngestService:
             url,
         )
 
-        # Auto-run quick comp on every new listing.
-        # Wrapped in try/except so comp failure never blocks ingest.
+        # ============================================================
+        # Auto-chain: scrape all sources + run full pipeline
+        # One click should give the user everything.
+        # Each step is wrapped in try/except so failures don't block.
+        # ============================================================
+
+        # 1. Quick comp (neighborhood sales from county records)
         try:
             from pipa.services.comp_service import CompService
             await CompService.quick_comp(db, prop.id)
             logger.info("Quick comp completed for property %s", prop.id)
         except Exception:
-            logger.warning(
-                "Quick comp failed for property %s — ingest succeeded anyway",
-                prop.id,
-                exc_info=True,
+            logger.warning("Quick comp failed for %s", prop.id, exc_info=True)
+
+        # 2. County records (assessments, permits, deeds, components)
+        try:
+            from pipa.services.data_refresh import DataRefreshService
+            county_result = await DataRefreshService.refresh_source(db, prop.id, "county")
+            logger.info("County scrape: %s", county_result)
+        except Exception:
+            logger.warning("County scrape failed for %s", prop.id, exc_info=True)
+
+        # 3. School boundaries (LCPS)
+        try:
+            from pipa.services.data_refresh import DataRefreshService
+            school_result = await DataRefreshService.refresh_source(db, prop.id, "schools")
+            logger.info("School scrape: %s", school_result)
+        except Exception:
+            logger.warning("School scrape failed for %s", prop.id, exc_info=True)
+
+        # 4. Run full analysis pipeline (AI + financial + condition + decision)
+        try:
+            from pipa.services.pipeline_orchestrator import PipelineOrchestrator
+            run = await PipelineOrchestrator.start_run(db, prop.id, "full_pipeline", initiated_by="ingest")
+            await db.flush()
+            run = await PipelineOrchestrator.execute_run(
+                db, run.id,
+                listing_data=scraped,
             )
+            logger.info("Pipeline complete for %s: status=%s", prop.id, run.status)
+        except Exception:
+            logger.warning("Pipeline failed for %s", prop.id, exc_info=True)
 
         return prop, snapshot
 
@@ -233,12 +275,15 @@ class ListingIngestService:
 
         html_dir = self.storage_dir / "html_snapshots" / source_site
         screenshot_dir = self.storage_dir / "screenshots" / source_site
+        logger.debug("Scrape dirs — html: %s, screenshot: %s", html_dir, screenshot_dir)
 
-        return await scraper.scrape_listing(
+        result = await scraper.scrape_listing(
             url,
             save_html_dir=html_dir,
             save_screenshot_dir=screenshot_dir,
         )
+        logger.debug("Scraper.scrape_listing returned %d keys", len(result))
+        return result
 
     def _get_scraper(self, source_site: str):
         """Get or create a scraper instance for the given source site."""
@@ -246,6 +291,7 @@ class ListingIngestService:
             scraper_cls = self._SCRAPER_CLASSES.get(source_site)
             if scraper_cls is None:
                 raise ValueError(f"No scraper available for source: {source_site}")
+            logger.debug("Creating %s scraper (headless=%s)", source_site, self.headless)
             self._scrapers[source_site] = scraper_cls(headless=self.headless)
         return self._scrapers[source_site]
 
