@@ -12,7 +12,9 @@ from fastapi.staticfiles import StaticFiles
 
 from pipa.core.database import healthcheck, init_db
 from pipa.core.dependencies import get_engine
-from pipa.core.logging import setup_logging
+from pipa.core.logging import setup_logging, install_sqlalchemy_slow_query_listener
+from pipa.core.middleware import RequestTimingMiddleware
+from pipa.core.tracing import autotrace_package
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -22,10 +24,25 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
     setup_logging()
     engine = get_engine()
+    install_sqlalchemy_slow_query_listener(engine)
     await init_db(engine)
 
-    # Start background scheduler (no-op if another process holds the lock)
+    # Auto-trace all currently-loaded pipa.* modules. This wraps every
+    # public function and method in our codebase with entry/exit/duration
+    # logging. ORM models / Pydantic schemas are skipped automatically.
+    # Run AFTER routers and services have been imported (lifespan startup
+    # is invoked after FastAPI route registration) so we catch everything.
+    autotrace_package("pipa.services")
+    autotrace_package("pipa.clients")
+    autotrace_package("pipa.api.v1")
+    autotrace_package("pipa.report")
+
+    # Start background scheduler (no-op if another process holds the lock).
+    # Importing the scheduler module loads pipa.workers.* — we re-run
+    # autotrace for that prefix afterwards so the worker callables get
+    # wrapped too.
     from pipa.workers.scheduler import start_scheduler, stop_scheduler
+    autotrace_package("pipa.workers")
     await start_scheduler()
 
     yield
@@ -42,6 +59,10 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    # Request timing & logging — added FIRST so it wraps everything,
+    # including the static-file no-cache middleware below.
+    app.add_middleware(RequestTimingMiddleware)
 
     # CORS — narrow to same-origin SPA dev server only
     app.add_middleware(

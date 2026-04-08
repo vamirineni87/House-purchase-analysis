@@ -331,17 +331,22 @@ class ListingIngestService:
 
         Each step is wrapped in try/except so a failure (or 5-minute Claude
         CLI hang on AI Pass 1) doesn't block earlier steps from being
-        visible.
+        visible. Per-step timing is logged so we can see which step is
+        currently running when the UI refreshes mid-pipeline.
         """
+        import time
         from pipa.core.dependencies import get_config, get_session_factory
 
         factory = get_session_factory()
-        logger.info("[bg] Starting post-ingest chain for property %s", property_id)
+        chain_start = time.monotonic()
+        logger.info("[bg] === Post-ingest chain START for property %s ===", property_id)
 
         listing_data: dict | None = None
 
         # --- 0. Listing scrape (replaces the URL-slug placeholder) ---
         if listing_url:
+            step_start = time.monotonic()
+            logger.info("[bg] step 0/4: Listing scrape START (%s)", listing_url)
             async with factory() as db:
                 config = get_config()
                 bg_service = ListingIngestService(
@@ -363,7 +368,6 @@ class ListingIngestService:
                         logger.error("[bg] Placeholder property %s not found", property_id)
                         return
 
-                    logger.info("[bg] Scraping listing %s", listing_url)
                     scraped = await bg_service._scrape(source_site, listing_url)
                     logger.info(
                         "[bg] Scrape returned %d fields, extraction_method=%s",
@@ -376,52 +380,83 @@ class ListingIngestService:
                     )
                     await db.commit()
                     listing_data = scraped
+                    logger.info(
+                        "[bg] step 0/4: Listing scrape DONE in %.1fs",
+                        time.monotonic() - step_start,
+                    )
                 except Exception:
                     await db.rollback()
                     logger.warning(
-                        "[bg] Listing scrape failed for %s", property_id, exc_info=True,
+                        "[bg] step 0/4: Listing scrape FAILED for %s after %.1fs",
+                        property_id, time.monotonic() - step_start, exc_info=True,
                     )
                 finally:
                     await bg_service.close()
 
         # --- 1. County scrape (must run before quick_comp) ---
+        step_start = time.monotonic()
+        logger.info("[bg] step 1/4: County scrape START")
         async with factory() as db:
             try:
                 from pipa.services.data_refresh import DataRefreshService
                 county_result = await DataRefreshService.refresh_source(db, property_id, "county")
                 await db.commit()
-                logger.info("[bg] County scrape: %s", county_result)
+                logger.info(
+                    "[bg] step 1/4: County scrape DONE in %.1fs (%s)",
+                    time.monotonic() - step_start, county_result,
+                )
             except Exception:
                 await db.rollback()
-                logger.warning("[bg] County scrape failed for %s", property_id, exc_info=True)
+                logger.warning(
+                    "[bg] step 1/4: County scrape FAILED after %.1fs",
+                    time.monotonic() - step_start, exc_info=True,
+                )
 
         # --- 2. School boundaries (LCPS) ---
+        step_start = time.monotonic()
+        logger.info("[bg] step 2/4: School scrape START")
         async with factory() as db:
             try:
                 from pipa.services.data_refresh import DataRefreshService
                 school_result = await DataRefreshService.refresh_source(db, property_id, "schools")
                 await db.commit()
-                logger.info("[bg] School scrape: %s", school_result)
+                logger.info(
+                    "[bg] step 2/4: School scrape DONE in %.1fs (%s)",
+                    time.monotonic() - step_start, school_result,
+                )
             except Exception:
                 await db.rollback()
-                logger.warning("[bg] School scrape failed for %s", property_id, exc_info=True)
+                logger.warning(
+                    "[bg] step 2/4: School scrape FAILED after %.1fs",
+                    time.monotonic() - step_start, exc_info=True,
+                )
 
         # --- 3. Quick comp (consumes the county Neighborhood Sales) ---
+        step_start = time.monotonic()
+        logger.info("[bg] step 3/4: Quick comp START")
         async with factory() as db:
             try:
                 from pipa.services.comp_service import CompService
                 await CompService.quick_comp(db, property_id)
                 await db.commit()
-                logger.info("[bg] Quick comp completed for %s", property_id)
+                logger.info(
+                    "[bg] step 3/4: Quick comp DONE in %.1fs",
+                    time.monotonic() - step_start,
+                )
             except Exception:
                 await db.rollback()
-                logger.warning("[bg] Quick comp failed for %s", property_id, exc_info=True)
+                logger.warning(
+                    "[bg] step 3/4: Quick comp FAILED after %.1fs",
+                    time.monotonic() - step_start, exc_info=True,
+                )
 
         # --- 4. Full analysis pipeline (AI + financial + condition + decision)
         # Mid-run checkpoint commit after `condition` so the UI sees AI Pass 1,
         # resolver, financial, tax, and condition results immediately, without
         # having to wait for the slow tail (offer/stress/warning_engine/AI
         # Pass 2/decision_packet) to finish.
+        step_start = time.monotonic()
+        logger.info("[bg] step 4/4: Full pipeline START")
         async with factory() as db:
             try:
                 from pipa.services.pipeline_orchestrator import PipelineOrchestrator
@@ -435,12 +470,21 @@ class ListingIngestService:
                     commit_after_tasks={"condition"},
                 )
                 await db.commit()
-                logger.info("[bg] Pipeline complete for %s: status=%s", property_id, run.status)
+                logger.info(
+                    "[bg] step 4/4: Full pipeline DONE in %.1fs (status=%s)",
+                    time.monotonic() - step_start, run.status,
+                )
             except Exception:
                 await db.rollback()
-                logger.warning("[bg] Pipeline failed for %s", property_id, exc_info=True)
+                logger.warning(
+                    "[bg] step 4/4: Full pipeline FAILED after %.1fs",
+                    time.monotonic() - step_start, exc_info=True,
+                )
 
-        logger.info("[bg] Post-ingest chain finished for property %s", property_id)
+        logger.info(
+            "[bg] === Post-ingest chain DONE for property %s in %.1fs ===",
+            property_id, time.monotonic() - chain_start,
+        )
 
     async def ingest_from_address(
         self,

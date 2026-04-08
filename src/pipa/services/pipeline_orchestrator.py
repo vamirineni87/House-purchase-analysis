@@ -185,6 +185,11 @@ class PipelineOrchestrator:
             task.started_at = datetime.now(timezone.utc)
             await db.flush()
 
+            logger.info(
+                "Pipeline task START: %s (run %s)",
+                task.task_name, pipeline_run_id,
+            )
+
             t0 = time.monotonic()
             try:
                 summary = await _execute_task(task.task_name, ctx, db)
@@ -195,10 +200,17 @@ class PipelineOrchestrator:
                 task.duration_ms = elapsed_ms
                 task.result_summary = summary or {}
                 succeeded += 1
+                logger.info(
+                    "Pipeline task DONE:  %s in %dms (run %s)",
+                    task.task_name, elapsed_ms, pipeline_run_id,
+                )
             except Exception:
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 tb = traceback.format_exc()
-                logger.exception("Task %s failed in run %s", task.task_name, pipeline_run_id)
+                logger.exception(
+                    "Pipeline task FAIL:  %s after %dms (run %s)",
+                    task.task_name, elapsed_ms, pipeline_run_id,
+                )
 
                 task.status = "failed"
                 task.completed_at = datetime.now(timezone.utc)

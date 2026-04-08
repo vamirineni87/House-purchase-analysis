@@ -764,8 +764,17 @@ class ZillowScraper(BaseScraper):
             # ==============================================
             # Layer 1: GraphQL interception (PRIMARY)
             # ==============================================
-            logger.debug("Extracting from %d GraphQL responses...", len(graphql_bodies))
+            # NOTE: All extraction layers below run synchronous regex /
+            # JSON parsing on a multi-MB HTML blob. They block the asyncio
+            # event loop while running. Per-layer timing logged so we can
+            # see if a layer is starving the loop and causing the UI to
+            # appear "stuck loading" during a background scrape.
+            import time as _t
+            t_layer = _t.monotonic()
+            logger.debug("Layer 1 (GraphQL): extracting from %d responses...", len(graphql_bodies))
             graphql_data = self._extract_from_graphql(graphql_bodies)
+            logger.info("Layer 1 (GraphQL) parse: %.0fms, %d fields",
+                        (_t.monotonic() - t_layer) * 1000, len(graphql_data))
             if graphql_data:
                 result.update(graphql_data)
                 result["_extraction_method"] = "graphql"
@@ -777,8 +786,11 @@ class ZillowScraper(BaseScraper):
             # ==============================================
             # Layer 2: JSON-LD (fills gaps)
             # ==============================================
-            logger.debug("Extracting from JSON-LD...")
+            t_layer = _t.monotonic()
+            logger.debug("Layer 2 (JSON-LD): extracting from %d-char HTML...", len(html))
             jsonld_data = self._extract_from_jsonld(html)
+            logger.info("Layer 2 (JSON-LD) parse: %.0fms, %d fields",
+                        (_t.monotonic() - t_layer) * 1000, len(jsonld_data))
             if jsonld_data:
                 filled = 0
                 for k, v in jsonld_data.items():
@@ -794,8 +806,11 @@ class ZillowScraper(BaseScraper):
             # ==============================================
             # Layer 3: HTML DOM parsing (fills remaining gaps)
             # ==============================================
-            logger.debug("Extracting from HTML DOM...")
+            t_layer = _t.monotonic()
+            logger.debug("Layer 3 (HTML DOM): extracting from %d-char HTML...", len(html))
             html_data = self._extract_from_html(html)
+            logger.info("Layer 3 (HTML DOM) parse: %.0fms, %d fields",
+                        (_t.monotonic() - t_layer) * 1000, len(html_data))
             if html_data:
                 filled = 0
                 for k, v in html_data.items():
@@ -816,9 +831,14 @@ class ZillowScraper(BaseScraper):
             # rooms, heating, cooling, materials, foundation, roof, HOA
             # amenities, parking, etc. Downstream resolver/AI/UI consume
             # these typed fields directly.
+            t_layer = _t.monotonic()
             ff = result.get("facts_and_features")
             if ff:
                 normalized = _normalize_facts(ff)
+                logger.info(
+                    "Layer 4 (normalize_facts) parse: %.0fms, %d fields",
+                    (_t.monotonic() - t_layer) * 1000, len(normalized),
+                )
                 if normalized:
                     new_keys = 0
                     for k, v in normalized.items():
