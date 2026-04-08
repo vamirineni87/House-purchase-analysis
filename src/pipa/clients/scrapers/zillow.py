@@ -381,7 +381,24 @@ def _normalize_facts(facts: dict[str, list[str]] | None) -> dict[str, Any]:
                 it = _decode(it)
                 v = _strip_label(it, "Size")
                 if v is not None:
-                    out["lot_sqft_listing"] = _parse_int(v)
+                    # Zillow lot size is one of:
+                    #   "9,148 Square Feet"   → sqft
+                    #   "0.21 Acres"          → acres (convert to sqft)
+                    v_low = v.lower()
+                    if "acre" in v_low:
+                        m = re.search(r"([\d.]+)", v)
+                        if m:
+                            try:
+                                acres = float(m.group(1))
+                                out["lot_acres_listing"] = acres
+                                out["lot_sqft_listing"] = int(acres * 43560)
+                            except ValueError:
+                                pass
+                    else:
+                        # Square feet
+                        sqft_val = _parse_int(v)
+                        if sqft_val:
+                            out["lot_sqft_listing"] = sqft_val
                     continue
                 v = _strip_label(it, "Features")
                 if v is not None:
@@ -503,12 +520,26 @@ def _normalize_facts(facts: dict[str, list[str]] | None) -> dict[str, Any]:
                     continue
                 v = _strip_label(it, "HOA fee")
                 if v is not None:
-                    # "$205 monthly" → 205, "monthly"
-                    out["hoa_monthly"] = _parse_money(v)
-                    if "month" in v.lower():
+                    # "$205 monthly" → hoa_monthly=205, hoa_frequency=monthly
+                    # "$2460 annually" → hoa_annual=2460, hoa_monthly=205, hoa_frequency=annual
+                    fee_amount = _parse_money(v)
+                    v_low = v.lower()
+                    if "month" in v_low:
                         out["hoa_frequency"] = "monthly"
-                    elif "annual" in v.lower() or "year" in v.lower():
+                        if fee_amount is not None:
+                            out["hoa_monthly"] = fee_amount
+                    elif "annual" in v_low or "year" in v_low:
                         out["hoa_frequency"] = "annual"
+                        if fee_amount is not None:
+                            out["hoa_annual"] = fee_amount
+                            # Convert to monthly so downstream code (financial
+                            # engine, condition scoring) sees a consistent
+                            # monthly figure regardless of how Zillow listed it.
+                            out["hoa_monthly"] = round(fee_amount / 12)
+                    else:
+                        # Frequency unknown — store as-is and assume monthly.
+                        if fee_amount is not None:
+                            out["hoa_monthly"] = fee_amount
                     continue
                 v = _strip_label(it, "HOA name")
                 if v is not None:

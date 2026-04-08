@@ -234,11 +234,21 @@ export function render(container, state) {
     // HOA
     // ============================================================
     let hoaSection = '';
-    if (ld.has_hoa || ld.hoa_name || ld.hoa_monthly) {
+    if (ld.has_hoa || ld.hoa_name || ld.hoa_monthly || ld.hoa_annual) {
+        // Show monthly + annual side-by-side when we have both, otherwise
+        // whichever we have. Map frequency string → short form.
+        let feeDisplay = null;
+        if (ld.hoa_monthly && ld.hoa_annual) {
+            feeDisplay = `$${ld.hoa_monthly}/mo ($${ld.hoa_annual}/yr)`;
+        } else if (ld.hoa_monthly) {
+            feeDisplay = `$${ld.hoa_monthly}/mo`;
+        } else if (ld.hoa_annual) {
+            feeDisplay = `$${ld.hoa_annual}/yr`;
+        }
         const hoaTable = renderFactTable('HOA', [
             ['Has HOA', ld.has_hoa],
             ['HOA name', ld.hoa_name],
-            ['Fee', ld.hoa_monthly ? `$${ld.hoa_monthly}/${ld.hoa_frequency || 'mo'}` : null],
+            ['Fee', feeDisplay],
         ]);
         const amenitiesChips = renderChipList('HOA Amenities', ld.hoa_amenities);
         const servicesChips = renderChipList('HOA Services Included', ld.hoa_services);

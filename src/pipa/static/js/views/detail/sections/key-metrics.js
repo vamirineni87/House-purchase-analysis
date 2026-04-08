@@ -125,6 +125,30 @@ function getCountyFields(state) {
  * Returns a single cell with both values stacked, or a normal cell when
  * only one source has data.
  */
+/**
+ * Smart comparison: prefers numeric equality when both sides are
+ * parseable as numbers (so 3 vs "3 STORIES" vs "3.0" all match), and
+ * a substring/normalized-string comparison otherwise. Returns true
+ * when the values are CONSIDERED EQUAL.
+ */
+function _valuesEqual(a, b) {
+    if (a == null || b == null) return false;
+    const aNum = parseFloat(String(a).replace(/[^0-9.\-]/g, ''));
+    const bNum = parseFloat(String(b).replace(/[^0-9.\-]/g, ''));
+    if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+        // Numeric comparison with 1% tolerance for sqft-style values
+        const big = Math.max(Math.abs(aNum), Math.abs(bNum));
+        if (big === 0) return aNum === bNum;
+        return Math.abs(aNum - bNum) / big <= 0.01;
+    }
+    // Fall back to normalized string comparison: lowercase, trim,
+    // collapse whitespace, and check substring containment either way.
+    const norm = s => String(s).toLowerCase().trim().replace(/\s+/g, ' ');
+    const aS = norm(a);
+    const bS = norm(b);
+    return aS === bS || aS.includes(bS) || bS.includes(aS);
+}
+
 function comparisonCell(label, listingVal, countyVal) {
     const lShow = (listingVal != null && listingVal !== '');
     const cShow = (countyVal != null && countyVal !== '');
@@ -137,10 +161,8 @@ function comparisonCell(label, listingVal, countyVal) {
     if (!lShow && cShow) {
         return metricCell(label, String(countyVal), 'C');
     }
-    // Both — stack them; flag mismatch.
-    const lStr = String(listingVal).toLowerCase().trim();
-    const cStr = String(countyVal).toLowerCase().trim();
-    const mismatch = lStr !== cStr;
+    // Both — stack them; flag mismatch only when values genuinely differ.
+    const mismatch = !_valuesEqual(listingVal, countyVal);
     const mismatchClass = mismatch ? 'border-l-2 border-amber-400 pl-2' : '';
     return `
     <div class="py-1 ${mismatchClass}">
@@ -294,13 +316,21 @@ export function render(state) {
     }
 
     // ── County-only fields (no listing equivalent in facts) ───────
-    if (county.bsmt_total_sqft || bsmtTotal) {
-        cells.push(metricCell('Bsmt Total', bsmtTotal ? `${fmtNum(bsmtTotal)} sf` : '--', 'C'));
+    if (bsmtTotal != null) {
+        cells.push(metricCell('Bsmt Total', `${fmtNum(bsmtTotal)} sf`, 'C'));
     }
-    cells.push(metricCell('HVAC (county)', county.heating_ac || '--', 'C'));
-    cells.push(metricCell('Roof Type', county.roof_type || '--', 'C'));
-    cells.push(metricCell('Attic', county.attic_type || '--', 'C'));
-    cells.push(metricCell('Grade', county.grade || '--', 'C'));
+    if (county.heating_ac) {
+        cells.push(metricCell('HVAC (county)', county.heating_ac, 'C'));
+    }
+    if (county.roof_type) {
+        cells.push(metricCell('Roof Type', county.roof_type, 'C'));
+    }
+    if (county.attic_type) {
+        cells.push(metricCell('Attic', county.attic_type, 'C'));
+    }
+    if (county.grade) {
+        cells.push(metricCell('Grade', county.grade, 'C'));
+    }
 
     // ── Flood Zone (FEMA) ───────────────────────────────────────
     const flood = state.floodZone;

@@ -535,14 +535,24 @@ class ListingIngestService:
 
     @staticmethod
     def _build_address_string(scraped: dict) -> str | None:
-        """Build a comma-separated address string from scraped data."""
-        addr = scraped.get("address")
-        if not isinstance(addr, dict):
-            return None
-        street = addr.get("street", "").strip()
-        city = addr.get("city", "").strip()
-        state = addr.get("state", "").strip()
-        zip_code = addr.get("zip", "").strip()
+        """Build a comma-separated address string from scraped data.
+
+        Reads from both the GraphQL top-level fields (street_address /
+        city / state / zipcode) and the JSON-LD nested address dict so
+        we don't miss data depending on which extraction layer fired.
+        """
+        addr = scraped.get("address") if isinstance(scraped.get("address"), dict) else {}
+        street = (scraped.get("street_address") or addr.get("street") or "").strip()
+        city = (scraped.get("city") or addr.get("city") or "").strip()
+        state = (scraped.get("state") or addr.get("state") or "").strip()
+        zip_code = (
+            scraped.get("zipcode")
+            or scraped.get("zip_code")
+            or scraped.get("zip")
+            or addr.get("zip")
+            or addr.get("zip_code")
+            or ""
+        ).strip()
 
         if not street or not city:
             return None
@@ -623,11 +633,27 @@ class ListingIngestService:
         Zillow GraphQL didn't return one. After merging the individual
         fields, ``raw_address`` and ``normalized_address`` are rebuilt
         from the *merged* row state so they stay consistent.
+
+        Reads from BOTH the GraphQL top-level fields (street_address /
+        city / state / zipcode) AND the JSON-LD nested address dict, so
+        we don't miss data depending on which extraction layer fired.
         """
-        scraped_street = (scraped.get("street_address") or scraped.get("address") or "").strip()
-        scraped_city = (scraped.get("city") or "").strip()
-        scraped_state = (scraped.get("state") or "").strip()
-        scraped_zip = (scraped.get("zip_code") or scraped.get("zip") or "").strip()
+        # Prefer GraphQL top-level fields. JSON-LD's nested address dict
+        # ("address": {street, city, state, zip}) is the fallback. Note:
+        # scraped["address"] is sometimes a dict and sometimes absent.
+        addr_dict = scraped.get("address") if isinstance(scraped.get("address"), dict) else {}
+
+        scraped_street = (scraped.get("street_address") or addr_dict.get("street") or "").strip()
+        scraped_city = (scraped.get("city") or addr_dict.get("city") or "").strip()
+        scraped_state = (scraped.get("state") or addr_dict.get("state") or "").strip()
+        scraped_zip = (
+            scraped.get("zipcode")
+            or scraped.get("zip_code")
+            or scraped.get("zip")
+            or addr_dict.get("zip")
+            or addr_dict.get("zip_code")
+            or ""
+        ).strip()
 
         if not (scraped_street or scraped_city or scraped_state or scraped_zip):
             return  # Nothing usable
@@ -725,38 +751,48 @@ class ListingIngestService:
         if not status:
             status = "active"
 
+        # Map current scraper output keys → ListingEpisode columns.
+        # The scraper writes: price, bedrooms, bathrooms, sqft, year_built,
+        # mls_id, days_on_zillow. The old keys (list_price/beds/baths/
+        # mls_number/days_on_market) were never populated by GraphQL.
+        list_price = scraped.get("price")
+        bedrooms = scraped.get("bedrooms")
+        bathrooms = scraped.get("bathrooms") or scraped.get("baths")
+        sqft = scraped.get("sqft")
+        year_built = scraped.get("year_built")
+        mls_number = scraped.get("mls_id") or scraped.get("mls_number")
+        days_on_market = scraped.get("days_on_zillow") or scraped.get("days_on_market")
+
         if existing:
-            # Update existing episode
             existing.status = status
-            if scraped.get("list_price"):
-                existing.original_list_price = scraped["list_price"]
-            if scraped.get("beds"):
-                existing.bedrooms = scraped["beds"]
-            if scraped.get("baths"):
-                existing.bathrooms = scraped["baths"]
-            if scraped.get("sqft"):
-                existing.sqft = scraped["sqft"]
-            if scraped.get("year_built"):
-                existing.year_built = scraped["year_built"]
-            if scraped.get("mls_number"):
-                existing.mls_number = scraped["mls_number"]
-            if scraped.get("days_on_market"):
-                existing.days_on_market = scraped["days_on_market"]
+            if list_price is not None:
+                existing.original_list_price = list_price
+            if bedrooms is not None:
+                existing.bedrooms = bedrooms
+            if bathrooms is not None:
+                existing.bathrooms = bathrooms
+            if sqft is not None:
+                existing.sqft = sqft
+            if year_built is not None:
+                existing.year_built = year_built
+            if mls_number is not None:
+                existing.mls_number = mls_number
+            if days_on_market is not None:
+                existing.days_on_market = days_on_market
             await db.flush()
         else:
-            # Create new episode
             episode = ListingEpisode(
                 property_id=prop.id,
                 source=f"{source_site}_listing",
-                original_list_price=scraped.get("list_price"),
+                original_list_price=list_price,
                 original_list_date=now,
                 status=status,
-                bedrooms=scraped.get("beds"),
-                bathrooms=scraped.get("baths"),
-                sqft=scraped.get("sqft"),
-                year_built=scraped.get("year_built"),
-                mls_number=scraped.get("mls_number"),
-                days_on_market=scraped.get("days_on_market"),
+                bedrooms=bedrooms,
+                bathrooms=bathrooms,
+                sqft=sqft,
+                year_built=year_built,
+                mls_number=mls_number,
+                days_on_market=days_on_market,
             )
             db.add(episode)
             await db.flush()
@@ -769,28 +805,40 @@ class ListingIngestService:
         source_record: SourceRecord,
         now: datetime,
     ):
-        """Store key scraped facts as EvidenceItem records."""
-        # Fields to store as evidence (field_name -> scraped key)
+        """Store key scraped facts as EvidenceItem records.
+
+        Field names match the current Zillow scraper output (price,
+        bedrooms, bathrooms, lot_sqft, etc.) — NOT the older list_price /
+        beds / baths / lot_size which were never populated by the
+        modern GraphQL-first extractor.
+        """
+        # Fields to store as evidence (evidence_field_name -> scraped key)
         evidence_fields = {
-            "list_price": "list_price",
-            "beds": "beds",
-            "baths": "baths",
+            "list_price": "price",
+            "beds": "bedrooms",
+            "baths": "bathrooms",
             "sqft": "sqft",
             "year_built": "year_built",
-            "lot_size": "lot_size",
+            "lot_sqft": "lot_sqft",
+            "lot_acres": "lot_acres",
             "hoa_monthly": "hoa_monthly",
-            "property_type": "property_type",
-            "days_on_market": "days_on_market",
+            "property_type": "home_type",
+            "days_on_market": "days_on_zillow",
             "zestimate": "zestimate",
-            "redfin_estimate": "redfin_estimate",
+            "rent_zestimate": "rent_zestimate",
             "walk_score": "walk_score",
             "transit_score": "transit_score",
             "bike_score": "bike_score",
-            "listing_agent": "listing_agent",
-            "listing_brokerage": "listing_brokerage",
-            "mls_number": "mls_number",
-            "parcel_number": "parcel_number",
+            "listing_agent": "agent_name",
+            "listing_brokerage": "brokerage",
+            "mls_number": "mls_id",
+            "parcel_number": "parcel_id",
             "description": "description",
+            # Construction (from facts_and_features normalization)
+            "architectural_style": "architectural_style",
+            "builder_model": "builder_model",
+            "zillow_condition": "zillow_condition",
+            "subdivision": "subdivision",
         }
 
         for field_name, scraped_key in evidence_fields.items():
@@ -826,13 +874,22 @@ class ListingIngestService:
         if not parcel_number:
             return
 
-        # Detect county from scraped address
-        addr = scraped.get("address", {})
-        county = detect_county(
-            addr.get("city", ""),
-            addr.get("state", "VA"),
-            addr.get("zip", ""),
-        ) or "unknown"
+        # Detect county from scraped address. Read from BOTH the
+        # GraphQL top-level fields AND the JSON-LD nested address dict
+        # so we never trip on a None or missing key. Defaults to "unknown"
+        # if nothing usable is found.
+        addr_dict = scraped.get("address") if isinstance(scraped.get("address"), dict) else {}
+        city = scraped.get("city") or addr_dict.get("city") or ""
+        state = scraped.get("state") or addr_dict.get("state") or "VA"
+        zip_code = (
+            scraped.get("zipcode")
+            or scraped.get("zip_code")
+            or scraped.get("zip")
+            or addr_dict.get("zip")
+            or addr_dict.get("zip_code")
+            or ""
+        )
+        county = detect_county(city, state, zip_code) or "unknown"
 
         # Check if this parcel ID already exists
         result = await db.execute(
