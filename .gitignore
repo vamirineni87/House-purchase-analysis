@@ -70,3 +70,10 @@ frontend/.env.local
 # Playwright
 playwright-report/
 test-results/
+
+# Browser session cookies (contain auth tokens)
+*_cookies.txt
+*_cookies.json
+
+# Server logs
+logs/server.log
