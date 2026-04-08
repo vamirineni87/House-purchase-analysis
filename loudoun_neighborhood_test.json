@@ -1,0 +1,692 @@
+{
+  "_source": "loudoun_county",
+  "_url": "https://reparcelasmt.loudoun.gov/pt/search/commonsearch.aspx?mode=address",
+  "_parser_version": "1.0.0",
+  "_scraped_at": "2026-04-08T19:22:34.462474+00:00",
+  "_search": {
+    "house_number": "22817",
+    "street_name": "PORTICO",
+    "street_type": "PL"
+  },
+  "_detail_url": "https://reparcelasmt.loudoun.gov/pt/Datalets/Datalet.aspx?sIndex=0&idx=1",
+  "Neighborhood Sales": {
+    "_rows": [
+      [
+        "Ref. No: 159486167000 Residential Sales In This Neighborhood - Last 18 Months",
+        "Ref. No: 159486167000 Residential Sales In This Neighborhood - Last 18 Months"
+      ],
+      [
+        "Ref. No: 159486167000 Residential Sales In This Neighborhood - Last 18 Months"
+      ],
+      [
+        "Options Sort by: Parcel #Property AddressStyleModelBuilder NameYear BuiltLast SalePriceSubdivisionSale Validity Ascending Descending Results/page: 10152025 Search",
+        "Options",
+        "Sort by:",
+        "Parcel #Property AddressStyleModelBuilder NameYear BuiltLast SalePriceSubdivisionSale Validity Ascending Descending",
+        "Results/page: 10152025",
+        "Search"
+      ],
+      [
+        "Options",
+        "Sort by:",
+        "Parcel #Property AddressStyleModelBuilder NameYear BuiltLast SalePriceSubdivisionSale Validity Ascending Descending",
+        "Results/page: 10152025",
+        "Search"
+      ],
+      [
+        "Results",
+        "Click rows to view property details",
+        "Displaying 1 - 25 of 29"
+      ],
+      [
+        "159255701000",
+        "42449 MEADOW SAGE DR",
+        "COLONIAL",
+        "LANSDALE",
+        "WINCHESTER",
+        "2008",
+        "02/27/2026",
+        "$1,145,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "200392776000",
+        "42206 BUNKER WOODS PL",
+        "COLONIAL",
+        "DARTMOUTH",
+        "BEAZER HOMES",
+        "2015",
+        "02/23/2026",
+        "$1,400,000",
+        "BRAMBLETON",
+        "3 - Non-Market..."
+      ],
+      [
+        "161489970000",
+        "23582 PROSPERITY RIDGE PL",
+        "COLONIAL",
+        "PRESCOTT",
+        "WINCHESTER",
+        "2014",
+        "01/05/2026",
+        "$1,330,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159297133000",
+        "23069 RUSHMORE CT",
+        "COLONIAL",
+        "BRITTANY",
+        "CENTEX",
+        "2006",
+        "11/12/2025",
+        "$1,362,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159489084000",
+        "22808 PORTICO PL",
+        "COLONIAL",
+        "BROWNING",
+        "WINCHESTER",
+        "2004",
+        "10/15/2025",
+        "$1,220,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159199028000",
+        "42850 CONQUEST CIR",
+        "COLONIAL",
+        "ESSEX",
+        "BEAZER HOMES",
+        "2005",
+        "10/10/2025",
+        "$1,175,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "200495001000",
+        "42242 FAWN RIDGE CT",
+        "COLONIAL",
+        "DARTMOUTH",
+        "BEAZER HOMES",
+        "2014",
+        "09/03/2025",
+        "$1,500,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159251261000",
+        "22996 OLYMPIA DR",
+        "COLONIAL",
+        "ASHCROFT",
+        "GULICK",
+        "2010",
+        "09/02/2025",
+        "$1,375,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "201277687000",
+        "42108 AUTUMN RAIN CIR",
+        "COLONIAL",
+        "KINGSTON",
+        "BEAZER HOMES",
+        "2013",
+        "08/29/2025",
+        "$1,195,000",
+        "BRAMBLETON BRANDT P...",
+        "1 - Market Sale"
+      ],
+      [
+        "201278445000",
+        "23420 SOMERSET CROSSING PL",
+        "COLONIAL",
+        "PEMBROKE",
+        "BEAZER HOMES",
+        "2014",
+        "08/12/2025",
+        "$1,240,000",
+        "BRAMBLETON BRANDT P...",
+        "1 - Market Sale"
+      ],
+      [
+        "202403092000",
+        "42350 STONEMONT CIR",
+        "COLONIAL",
+        "PORTSMOUTH",
+        "VAN METRE",
+        "2017",
+        "08/11/2025",
+        "$1,350,000",
+        "EVERMONT TRACE",
+        "1 - Market Sale"
+      ],
+      [
+        "159361624000",
+        "22962 LOIS LN",
+        "COLONIAL",
+        "TOWNSEND",
+        "GULICK",
+        "2006",
+        "07/31/2025",
+        "$1,350,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "200487686000",
+        "42177 BUNKER WOODS PL",
+        "COLONIAL",
+        "OXFORD II",
+        "WINCHESTER",
+        "2013",
+        "07/21/2025",
+        "$1,399,900",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "201402764000",
+        "42322 RISING MOON PL",
+        "COLONIAL",
+        "DANFIELD",
+        "WINCHESTER",
+        "2011",
+        "07/14/2025",
+        "$1,075,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159361317000",
+        "22966 LOIS LN",
+        "COLONIAL",
+        "TOWNSEND",
+        "GULICK",
+        "2006",
+        "07/08/2025",
+        "$1,290,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159281879000",
+        "23004 MINERVA DR",
+        "COLONIAL",
+        "RANDOLPH MANOR",
+        "GULICK",
+        "2004",
+        "07/01/2025",
+        "$1,353,797",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "160482137000",
+        "42883 CHATELAIN CIR",
+        "COLONIAL",
+        "OXFORD II",
+        "WINCHESTER",
+        "2006",
+        "06/24/2025",
+        "$1,350,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "160495759000",
+        "42795 EXPLORER DR",
+        "COLONIAL",
+        "FARNHAM I",
+        "BEAZER HOMES",
+        "2006",
+        "06/18/2025",
+        "$1,205,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "201280123000",
+        "23436 SOMERSET CROSSING PL",
+        "COLONIAL",
+        "PEMBROKE",
+        "BEAZER HOMES",
+        "2014",
+        "04/30/2025",
+        "$1,295,000",
+        "BRAMBLETON BRANDT P...",
+        "1 - Market Sale"
+      ],
+      [
+        "160168403000",
+        "42571 STRATFORD LANDING DR",
+        "COLONIAL",
+        "BRADLEY",
+        "WINCHESTER",
+        "2014",
+        "04/15/2025",
+        "$1,259,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "159283967000",
+        "23015 EAGLE WATCH CT",
+        "COLONIAL",
+        "WINTHROP MANOR",
+        "GULICK",
+        "2002",
+        "04/14/2025",
+        "$1,570,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "160486325000",
+        "42859 CHATELAIN CIR",
+        "COLONIAL",
+        "BENFIELD",
+        "WINCHESTER",
+        "2005",
+        "04/11/2025",
+        "$1,150,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "202499883000",
+        "23684 EVERMONT TRACE DR",
+        "COLONIAL",
+        "WATERBURY",
+        "VAN METRE",
+        "2017",
+        "04/01/2025",
+        "$1,180,000",
+        "EVERMONT TRACE",
+        "1 - Market Sale"
+      ],
+      [
+        "200291639000",
+        "22928 EMERALD CHASE PL",
+        "COLONIAL",
+        "OXFORD II",
+        "WINCHESTER",
+        "2014",
+        "03/21/2025",
+        "$1,240,000",
+        "BRAMBLETON",
+        "1 - Market Sale"
+      ],
+      [
+        "202399252000",
+        "42292 BIRNAM WOOD PL",
+        "COLONIAL",
+        "SOUTHBURY",
+        "VAN METRE",
+        "2017",
+        "01/03/2025",
+        "$1,355,000",
+        "EVERMONT TRACE",
+        "1 - Market Sale"
+      ],
+      [
+        "Selection Manager"
+      ],
+      [
+        "Select page all Select all Deselect page all Deselect all",
+        "Select page all",
+        "Select all",
+        "Deselect page all",
+        "Deselect all"
+      ],
+      [
+        "Select page all"
+      ],
+      [
+        "Select all"
+      ],
+      [
+        "Deselect page all"
+      ],
+      [
+        "Deselect all"
+      ],
+      [
+        "Search Manager"
+      ],
+      [
+        "View List - Map",
+        "View List - Map"
+      ],
+      [
+        "View List - Map"
+      ],
+      [
+        "Please wait ..."
+      ]
+    ],
+    "_row_count": 40,
+    "_key_values": {
+      "Ref. No: 159486167000 Residential Sales In This Neighborhood - Last 18 Months": "Ref. No: 159486167000 Residential Sales In This Neighborhood - Last 18 Months",
+      "Options Sort by: Parcel #Property AddressStyleModelBuilder NameYear BuiltLast SalePriceSubdivisionSale Validity Ascending Descending Results/page: 10152025 Search": "Options",
+      "Sort by:": "Parcel #Property AddressStyleModelBuilder NameYear BuiltLast SalePriceSubdivisionSale Validity Ascending Descending",
+      "Results/page: 10152025": "Search",
+      "View List - Map": "View List - Map"
+    },
+    "sales": [
+      {
+        "parcel_id": "159255701000",
+        "address": "42449 MEADOW SAGE DR",
+        "style": "COLONIAL",
+        "model": "LANSDALE",
+        "builder": "WINCHESTER",
+        "year_built": 2008,
+        "sale_date": "2026-02-27",
+        "sale_price": 1145000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "200392776000",
+        "address": "42206 BUNKER WOODS PL",
+        "style": "COLONIAL",
+        "model": "DARTMOUTH",
+        "builder": "BEAZER HOMES",
+        "year_built": 2015,
+        "sale_date": "2026-02-23",
+        "sale_price": 1400000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "3 - Non-Market..."
+      },
+      {
+        "parcel_id": "161489970000",
+        "address": "23582 PROSPERITY RIDGE PL",
+        "style": "COLONIAL",
+        "model": "PRESCOTT",
+        "builder": "WINCHESTER",
+        "year_built": 2014,
+        "sale_date": "2026-01-05",
+        "sale_price": 1330000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159297133000",
+        "address": "23069 RUSHMORE CT",
+        "style": "COLONIAL",
+        "model": "BRITTANY",
+        "builder": "CENTEX",
+        "year_built": 2006,
+        "sale_date": "2025-11-12",
+        "sale_price": 1362000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159489084000",
+        "address": "22808 PORTICO PL",
+        "style": "COLONIAL",
+        "model": "BROWNING",
+        "builder": "WINCHESTER",
+        "year_built": 2004,
+        "sale_date": "2025-10-15",
+        "sale_price": 1220000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159199028000",
+        "address": "42850 CONQUEST CIR",
+        "style": "COLONIAL",
+        "model": "ESSEX",
+        "builder": "BEAZER HOMES",
+        "year_built": 2005,
+        "sale_date": "2025-10-10",
+        "sale_price": 1175000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "200495001000",
+        "address": "42242 FAWN RIDGE CT",
+        "style": "COLONIAL",
+        "model": "DARTMOUTH",
+        "builder": "BEAZER HOMES",
+        "year_built": 2014,
+        "sale_date": "2025-09-03",
+        "sale_price": 1500000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159251261000",
+        "address": "22996 OLYMPIA DR",
+        "style": "COLONIAL",
+        "model": "ASHCROFT",
+        "builder": "GULICK",
+        "year_built": 2010,
+        "sale_date": "2025-09-02",
+        "sale_price": 1375000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "201277687000",
+        "address": "42108 AUTUMN RAIN CIR",
+        "style": "COLONIAL",
+        "model": "KINGSTON",
+        "builder": "BEAZER HOMES",
+        "year_built": 2013,
+        "sale_date": "2025-08-29",
+        "sale_price": 1195000.0,
+        "subdivision": "BRAMBLETON BRANDT P...",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "201278445000",
+        "address": "23420 SOMERSET CROSSING PL",
+        "style": "COLONIAL",
+        "model": "PEMBROKE",
+        "builder": "BEAZER HOMES",
+        "year_built": 2014,
+        "sale_date": "2025-08-12",
+        "sale_price": 1240000.0,
+        "subdivision": "BRAMBLETON BRANDT P...",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "202403092000",
+        "address": "42350 STONEMONT CIR",
+        "style": "COLONIAL",
+        "model": "PORTSMOUTH",
+        "builder": "VAN METRE",
+        "year_built": 2017,
+        "sale_date": "2025-08-11",
+        "sale_price": 1350000.0,
+        "subdivision": "EVERMONT TRACE",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159361624000",
+        "address": "22962 LOIS LN",
+        "style": "COLONIAL",
+        "model": "TOWNSEND",
+        "builder": "GULICK",
+        "year_built": 2006,
+        "sale_date": "2025-07-31",
+        "sale_price": 1350000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "200487686000",
+        "address": "42177 BUNKER WOODS PL",
+        "style": "COLONIAL",
+        "model": "OXFORD II",
+        "builder": "WINCHESTER",
+        "year_built": 2013,
+        "sale_date": "2025-07-21",
+        "sale_price": 1399900.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "201402764000",
+        "address": "42322 RISING MOON PL",
+        "style": "COLONIAL",
+        "model": "DANFIELD",
+        "builder": "WINCHESTER",
+        "year_built": 2011,
+        "sale_date": "2025-07-14",
+        "sale_price": 1075000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159361317000",
+        "address": "22966 LOIS LN",
+        "style": "COLONIAL",
+        "model": "TOWNSEND",
+        "builder": "GULICK",
+        "year_built": 2006,
+        "sale_date": "2025-07-08",
+        "sale_price": 1290000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159281879000",
+        "address": "23004 MINERVA DR",
+        "style": "COLONIAL",
+        "model": "RANDOLPH MANOR",
+        "builder": "GULICK",
+        "year_built": 2004,
+        "sale_date": "2025-07-01",
+        "sale_price": 1353797.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "160482137000",
+        "address": "42883 CHATELAIN CIR",
+        "style": "COLONIAL",
+        "model": "OXFORD II",
+        "builder": "WINCHESTER",
+        "year_built": 2006,
+        "sale_date": "2025-06-24",
+        "sale_price": 1350000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "160495759000",
+        "address": "42795 EXPLORER DR",
+        "style": "COLONIAL",
+        "model": "FARNHAM I",
+        "builder": "BEAZER HOMES",
+        "year_built": 2006,
+        "sale_date": "2025-06-18",
+        "sale_price": 1205000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "201280123000",
+        "address": "23436 SOMERSET CROSSING PL",
+        "style": "COLONIAL",
+        "model": "PEMBROKE",
+        "builder": "BEAZER HOMES",
+        "year_built": 2014,
+        "sale_date": "2025-04-30",
+        "sale_price": 1295000.0,
+        "subdivision": "BRAMBLETON BRANDT P...",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "160168403000",
+        "address": "42571 STRATFORD LANDING DR",
+        "style": "COLONIAL",
+        "model": "BRADLEY",
+        "builder": "WINCHESTER",
+        "year_built": 2014,
+        "sale_date": "2025-04-15",
+        "sale_price": 1259000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "159283967000",
+        "address": "23015 EAGLE WATCH CT",
+        "style": "COLONIAL",
+        "model": "WINTHROP MANOR",
+        "builder": "GULICK",
+        "year_built": 2002,
+        "sale_date": "2025-04-14",
+        "sale_price": 1570000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "160486325000",
+        "address": "42859 CHATELAIN CIR",
+        "style": "COLONIAL",
+        "model": "BENFIELD",
+        "builder": "WINCHESTER",
+        "year_built": 2005,
+        "sale_date": "2025-04-11",
+        "sale_price": 1150000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "202499883000",
+        "address": "23684 EVERMONT TRACE DR",
+        "style": "COLONIAL",
+        "model": "WATERBURY",
+        "builder": "VAN METRE",
+        "year_built": 2017,
+        "sale_date": "2025-04-01",
+        "sale_price": 1180000.0,
+        "subdivision": "EVERMONT TRACE",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "200291639000",
+        "address": "22928 EMERALD CHASE PL",
+        "style": "COLONIAL",
+        "model": "OXFORD II",
+        "builder": "WINCHESTER",
+        "year_built": 2014,
+        "sale_date": "2025-03-21",
+        "sale_price": 1240000.0,
+        "subdivision": "BRAMBLETON",
+        "sale_validity": "1 - Market Sale"
+      },
+      {
+        "parcel_id": "202399252000",
+        "address": "42292 BIRNAM WOOD PL",
+        "style": "COLONIAL",
+        "model": "SOUTHBURY",
+        "builder": "VAN METRE",
+        "year_built": 2017,
+        "sale_date": "2025-01-03",
+        "sale_price": 1355000.0,
+        "subdivision": "EVERMONT TRACE",
+        "sale_validity": "1 - Market Sale"
+      }
+    ]
+  },
+  "_summary": {
+    "_values_rows": [],
+    "detached_structures": []
+  }
+}

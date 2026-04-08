@@ -17,9 +17,9 @@ class CompCandidate(BaseModel):
 
     address: str
     price: Optional[float] = None  # sale price (sold) or list price (active/pending)
-    date: Optional[str] = None  # sale date or list date
+    date: Optional[str] = None  # sale date or list date (ISO YYYY-MM-DD)
     status: str = "sold"  # "sold", "active", "pending", "contingent"
-    source: str  # "zillow_nearby", "county_neighborhood", "rentcast"
+    source: str  # "zillow_nearby", "loudoun_neighborhood_sales", "rentcast", ...
     distance_mi: Optional[float] = None
     sqft: Optional[int] = None
     beds: Optional[int] = None
@@ -28,6 +28,13 @@ class CompCandidate(BaseModel):
     similarity_score: Optional[float] = None  # 0-100, set by filter_comps
     year_built: Optional[int] = None
     property_type: Optional[str] = None
+    # County-sourced extras (Loudoun Neighborhood Sales tab)
+    parcel_id: Optional[str] = None
+    style: Optional[str] = None        # COLONIAL, RANCH, etc.
+    model: Optional[str] = None        # builder model name (DARTMOUTH, LANSDALE, ...)
+    builder: Optional[str] = None      # WINCHESTER, BEAZER HOMES, ...
+    subdivision: Optional[str] = None
+    sale_validity: Optional[str] = None  # "1 - Market Sale", "3 - Non-Market...", etc.
 
 
 class EnrichedComp(BaseModel):

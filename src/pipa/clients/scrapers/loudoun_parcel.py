@@ -40,6 +40,7 @@ TABS = [
     "Commercial",
     "Parcel Tracking",
     "Tax Payment/History",
+    "Neighborhood Sales",
 ]
 
 
@@ -137,12 +138,35 @@ class LoudounParcelScraper(BaseScraper):
 
             result["_detail_url"] = page.url
 
+            # --- Step 3.5: Dump all nav links so we can see the real tab names ---
+            await self._debug_dump_nav_links(page)
+
             # --- Step 4: Scrape each tab ---
             tabs_to_scrape = tabs or TABS
             for tab_name in tabs_to_scrape:
                 logger.debug("Scraping tab: %s", tab_name)
                 tab_data = await self._scrape_tab(page, tab_name)
+
+                # Tab-specific post-processing
+                if tab_name == "Neighborhood Sales":
+                    tab_data["sales"] = self._parse_neighborhood_sales(tab_data.get("_rows") or [])
+                    logger.debug(
+                        "Neighborhood Sales: parsed %d sale rows out of %d raw rows",
+                        len(tab_data["sales"]), tab_data.get("_row_count", 0),
+                    )
+
                 result[tab_name] = tab_data
+                logger.debug(
+                    "Tab %s -> status=%s, rows=%d, kv=%d",
+                    tab_name,
+                    tab_data.get("_status", "ok"),
+                    tab_data.get("_row_count", 0),
+                    len(tab_data.get("_key_values", {})),
+                )
+                # Dump first 5 rows for inspection
+                rows = tab_data.get("_rows") or []
+                for i, row in enumerate(rows[:5]):
+                    logger.debug("  row[%d]: %r", i, row)
 
                 if save_screenshots and screenshot_dir:
                     screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -235,6 +259,8 @@ class LoudounParcelScraper(BaseScraper):
             for tab_name in tabs_to_scrape:
                 logger.debug("Scraping tab: %s", tab_name)
                 tab_data = await self._scrape_tab(page, tab_name)
+                if tab_name == "Neighborhood Sales":
+                    tab_data["sales"] = self._parse_neighborhood_sales(tab_data.get("_rows") or [])
                 result[tab_name] = tab_data
 
             result["_summary"] = self._build_summary(result)
@@ -287,6 +313,26 @@ class LoudounParcelScraper(BaseScraper):
     # ==================================================================
     # Tab scraping
     # ==================================================================
+
+    async def _debug_dump_nav_links(self, page) -> None:
+        """Log every anchor tag's text + href so we can see the real tab inventory."""
+        try:
+            links = await page.query_selector_all("a")
+            seen: list[tuple[str, str]] = []
+            for link in links:
+                text = (await link.text_content() or "").strip()
+                href = await link.get_attribute("href") or ""
+                if not text:
+                    continue
+                # Only nav-relevant links (datalet pages or in-page anchors)
+                if "datalet" in href.lower() or href.startswith("#") or "Datalet" in href:
+                    seen.append((text, href))
+            logger.debug("--- Nav link inventory (%d datalet/anchor links) ---", len(seen))
+            for text, href in seen:
+                logger.debug("  link: %-30s  href=%s", text, href[:120])
+            logger.debug("--- End nav link inventory ---")
+        except Exception as e:
+            logger.debug("Nav link dump failed: %s", e)
 
     async def _scrape_tab(self, page, tab_name: str) -> dict[str, Any]:
         """Click a tab link and extract its table data."""
@@ -367,6 +413,70 @@ class LoudounParcelScraper(BaseScraper):
             "_row_count": len(rows_data),
             "_key_values": kv_pairs,
         }
+
+    # ==================================================================
+    # Neighborhood Sales parser
+    # ==================================================================
+
+    @staticmethod
+    def _parse_neighborhood_sales(rows: list[list[str]]) -> list[dict[str, Any]]:
+        """Convert raw row data from the Neighborhood Sales tab into sale dicts.
+
+        Each data row has exactly 10 columns:
+            [parcel_id, address, style, model, builder, year_built,
+             sale_date, sale_price, subdivision, sale_validity]
+
+        Header/control rows are skipped by requiring col 0 to be a 12-digit
+        parcel id. Sale price is parsed to float, sale date is converted from
+        MM/DD/YYYY to ISO YYYY-MM-DD so downstream string comparisons work.
+        """
+        sales: list[dict[str, Any]] = []
+        for row in rows:
+            if len(row) != 10:
+                continue
+            parcel_id = (row[0] or "").strip()
+            if not parcel_id.isdigit() or len(parcel_id) < 10:
+                continue
+
+            # Parse price: "$1,145,000" -> 1145000.0
+            price_str = (row[7] or "").replace("$", "").replace(",", "").strip()
+            try:
+                sale_price: Optional[float] = float(price_str) if price_str else None
+            except ValueError:
+                sale_price = None
+
+            # Parse date: "10/15/2025" -> "2025-10-15"
+            sale_date_iso: Optional[str] = None
+            raw_date = (row[6] or "").strip()
+            if raw_date:
+                parts = raw_date.split("/")
+                if len(parts) == 3:
+                    try:
+                        m, d, y = parts
+                        sale_date_iso = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+                    except ValueError:
+                        sale_date_iso = None
+
+            # Parse year_built
+            year_built: Optional[int] = None
+            try:
+                year_built = int(row[5]) if row[5] else None
+            except ValueError:
+                year_built = None
+
+            sales.append({
+                "parcel_id": parcel_id,
+                "address": (row[1] or "").strip(),
+                "style": (row[2] or "").strip() or None,
+                "model": (row[3] or "").strip() or None,
+                "builder": (row[4] or "").strip() or None,
+                "year_built": year_built,
+                "sale_date": sale_date_iso,
+                "sale_price": sale_price,
+                "subdivision": (row[8] or "").strip() or None,
+                "sale_validity": (row[9] or "").strip() or None,
+            })
+        return sales
 
     # ==================================================================
     # Structured summary builder

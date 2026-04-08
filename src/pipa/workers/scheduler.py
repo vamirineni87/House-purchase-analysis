@@ -14,6 +14,7 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
+from sqlalchemy import create_engine as sa_create_engine, event
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,32 @@ def _release_lock():
         logger.exception("Failed to release scheduler lock")
 
 
+def _make_jobstore_engine(database_url: str):
+    """Build a sync SQLite engine for APScheduler with WAL + long busy_timeout.
+
+    APScheduler's default jobstore engine has busy_timeout=0, which means it
+    fails immediately on contention. With our async app and Playwright scrapers
+    writing constantly, this caused "database is locked" errors on every job
+    update. We share the WAL journal and give APScheduler 30s to wait its turn.
+    """
+    sync_url = database_url.replace("sqlite+aiosqlite", "sqlite")
+    engine = sa_create_engine(
+        sync_url,
+        connect_args={"timeout": 30},  # sqlite3 driver-level busy wait (seconds)
+        pool_pre_ping=True,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn, _record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30s, matches connect_args
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+    return engine
+
+
 def create_scheduler(database_url: str = "sqlite:///./pipa.db") -> AsyncIOScheduler:
     """Create and configure the APScheduler instance.
 
@@ -66,11 +93,10 @@ def create_scheduler(database_url: str = "sqlite:///./pipa.db") -> AsyncIOSchedu
         database_url: Synchronous SQLAlchemy URL for the job store.
                       Note: APScheduler 3.x uses sync engines internally.
     """
-    # Strip the async driver prefix if present
-    sync_url = database_url.replace("sqlite+aiosqlite", "sqlite")
+    jobstore_engine = _make_jobstore_engine(database_url)
 
     jobstores = {
-        "default": SQLAlchemyJobStore(url=sync_url, tablename="apscheduler_jobs"),
+        "default": SQLAlchemyJobStore(engine=jobstore_engine, tablename="apscheduler_jobs"),
     }
 
     executors = {

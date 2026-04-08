@@ -654,7 +654,11 @@ class CompService:
                         "property_type": entry.get("property_type") or entry.get("homeType"),
                     })
 
-        # --- Source 2: County neighborhood sales ---
+        # --- Source 2: County neighborhood sales (Loudoun parcel viewer) ---
+        # Schema produced by LoudounParcelScraper._parse_neighborhood_sales:
+        #   parcel_id, address, style, model, builder, year_built,
+        #   sale_date (ISO), sale_price (float), subdivision, sale_validity
+        # Note: county tab does not expose sqft / beds / baths.
         county_records = await db.execute(
             select(SourceRecord).where(
                 SourceRecord.property_id == property_id,
@@ -665,10 +669,15 @@ class CompService:
         )
         for record in county_records.scalars().all():
             payload = record.raw_payload or {}
-            # Neighborhood Sales tab from the county scraper
             ns = payload.get("Neighborhood Sales", {})
             sales_list = ns.get("sales", [])
             for sale in sales_list:
+                # Filter to true market sales — skip family transfers,
+                # foreclosures, etc., which would skew the comp set.
+                validity = (sale.get("sale_validity") or "").strip()
+                if validity and not validity.startswith("1 -"):
+                    continue
+
                 addr = sale.get("address") or sale.get("parcel_id") or ""
                 if not addr:
                     continue
@@ -682,11 +691,17 @@ class CompService:
                     "date": sale.get("sale_date") or "",
                     "status": "sold",
                     "source": "loudoun_neighborhood_sales",
-                    "sqft": _safe_int(sale.get("sqft")),
-                    "beds": _safe_int(sale.get("beds")),
-                    "baths": _safe_float(sale.get("baths")),
+                    # sqft/beds/baths not available from this tab
                     "year_built": _safe_int(sale.get("year_built")),
-                    "property_type": sale.get("style") or sale.get("property_type"),
+                    # property_type left None — filter_comps skips when either
+                    # side is unknown. The county "style" (COLONIAL) is not
+                    # comparable to Zillow's "single_family" property_type.
+                    "parcel_id": sale.get("parcel_id"),
+                    "style": sale.get("style"),
+                    "model": sale.get("model"),
+                    "builder": sale.get("builder"),
+                    "subdivision": sale.get("subdivision"),
+                    "sale_validity": validity or None,
                 })
 
         # Filter sold comps to last 2 quarters (6 months)

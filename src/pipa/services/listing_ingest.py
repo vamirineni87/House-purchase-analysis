@@ -175,15 +175,9 @@ class ListingIngestService:
         # Each step is wrapped in try/except so failures don't block.
         # ============================================================
 
-        # 1. Quick comp (neighborhood sales from county records)
-        try:
-            from pipa.services.comp_service import CompService
-            await CompService.quick_comp(db, prop.id)
-            logger.info("Quick comp completed for property %s", prop.id)
-        except Exception:
-            logger.warning("Quick comp failed for %s", prop.id, exc_info=True)
-
-        # 2. County records (assessments, permits, deeds, components)
+        # 1. County records (assessments, permits, deeds, components,
+        #    neighborhood sales) — must run BEFORE quick_comp, which reads
+        #    Neighborhood Sales out of the most recent county SourceRecord.
         try:
             from pipa.services.data_refresh import DataRefreshService
             county_result = await DataRefreshService.refresh_source(db, prop.id, "county")
@@ -191,13 +185,21 @@ class ListingIngestService:
         except Exception:
             logger.warning("County scrape failed for %s", prop.id, exc_info=True)
 
-        # 3. School boundaries (LCPS)
+        # 2. School boundaries (LCPS)
         try:
             from pipa.services.data_refresh import DataRefreshService
             school_result = await DataRefreshService.refresh_source(db, prop.id, "schools")
             logger.info("School scrape: %s", school_result)
         except Exception:
             logger.warning("School scrape failed for %s", prop.id, exc_info=True)
+
+        # 3. Quick comp (neighborhood sales from county records + listing nearby)
+        try:
+            from pipa.services.comp_service import CompService
+            await CompService.quick_comp(db, prop.id)
+            logger.info("Quick comp completed for property %s", prop.id)
+        except Exception:
+            logger.warning("Quick comp failed for %s", prop.id, exc_info=True)
 
         # 4. Run full analysis pipeline (AI + financial + condition + decision)
         try:
