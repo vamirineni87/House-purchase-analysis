@@ -115,6 +115,7 @@ class PipelineOrchestrator:
         max_monthly_payment: float = 8000,
         max_cash_at_closing: float = 300000,
         assessment_markup_pct: float = 7.0,
+        commit_after_tasks: set[str] | None = None,
     ) -> PipelineRun:
         """Execute all tasks in a pipeline run, updating status as each completes.
 
@@ -129,6 +130,14 @@ class PipelineOrchestrator:
         - If all succeeded: run.status = succeeded
         - If some failed: run.status = partial_success
         - If all failed: run.status = failed
+
+        commit_after_tasks: optional set of task names. After any task in
+            this set completes (success or failure), the function calls
+            ``db.commit()`` so partial pipeline results are durable and
+            visible to other connections (e.g. the UI) without waiting for
+            the slow tasks at the tail (AI Pass 2, decision packet) to
+            finish. Used by the background ingest chain to surface AI
+            Pass 1 / financial / condition results as soon as they exist.
         """
         result = await db.execute(
             select(PipelineRun)
@@ -200,6 +209,16 @@ class PipelineOrchestrator:
                 failed += 1
 
             await db.flush()
+
+            # Optional mid-run checkpoint commit so partial results are
+            # visible to other connections (e.g. the UI) without waiting
+            # for slow tail tasks (AI Pass 2, decision packet) to finish.
+            if commit_after_tasks and task.task_name in commit_after_tasks:
+                await db.commit()
+                logger.info(
+                    "Pipeline checkpoint commit after task %s (run %s)",
+                    task.task_name, pipeline_run_id,
+                )
 
         # Determine final run status
         run.completed_at = datetime.now(timezone.utc)

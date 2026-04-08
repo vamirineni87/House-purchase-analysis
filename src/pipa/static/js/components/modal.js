@@ -175,9 +175,17 @@ export function showAddPropertyModal() {
             }
 
             hideModal();
-            showToast('Property added successfully!', 'success');
-            if (result && result.property_id) {
-                window.location.hash = `#property/${result.property_id}`;
+            // The backend creates a placeholder property from the URL slug
+            // and returns immediately. The Zillow scrape, county scrape,
+            // schools, quick comp, and AI pipeline all run in a background
+            // task. Tell the user they can move on.
+            showToast(
+                'Property added. Scraping & analysis are running in the background — check back in a few minutes.',
+                'success',
+            );
+            const propId = result?.property?.id || result?.property_id;
+            if (propId) {
+                window.location.hash = `#property/${propId}`;
             }
         } catch (err) {
             loadingEl.classList.add('hidden');

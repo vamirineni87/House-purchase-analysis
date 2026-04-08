@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -207,11 +207,17 @@ async def delete_property(property_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/properties/ingest", response_model=PropertyIngestResponse, status_code=201)
-async def ingest_property(body: PropertyIngestRequest, db: AsyncSession = Depends(get_db)):
+async def ingest_property(
+    body: PropertyIngestRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     """Ingest a property from a listing URL or manual address.
 
-    If a URL is provided, scrapes the listing page and extracts property data.
-    If only an address is provided, creates the property without scraping.
+    If a URL is provided, scrapes the listing page and creates the property
+    record immediately, then schedules the slow auto-chain (county scrape,
+    schools, quick comp, AI pipeline) as a background task so the response
+    returns in seconds rather than minutes.
     """
     from pipa.services.listing_ingest import ListingIngestService
 
@@ -236,22 +242,28 @@ async def ingest_property(body: PropertyIngestRequest, db: AsyncSession = Depend
                     detail="URL must be from zillow.com, redfin.com, or realtor.com",
                 )
 
-            prop, snapshot = await service.ingest_from_url(db, body.url)
+            # Instant-response path: create a placeholder property from the
+            # URL slug, return 201 in ~100ms, then run the full scrape +
+            # county + schools + comps + AI pipeline in the background.
+            prop = await service.create_placeholder_from_url(db, body.url)
+            property_id_for_bg = prop.id
+            url_for_bg = body.url
+
+            # Commit so the placeholder is durable + visible to other
+            # connections (e.g. the property list refresh) before we hand
+            # off to the background task.
+            await db.commit()
+
+            background_tasks.add_task(
+                ListingIngestService.run_post_ingest_chain,
+                property_id_for_bg,
+                url_for_bg,
+                source,
+            )
+
             return PropertyIngestResponse(
                 property=PropertyResponse.model_validate(prop),
-                snapshot={
-                    "id": snapshot.id,
-                    "property_id": snapshot.property_id,
-                    "source_site": snapshot.source_site,
-                    "listing_url": snapshot.listing_url,
-                    "scraped_at": snapshot.scraped_at,
-                    "parsed_fields": snapshot.parsed_fields,
-                    "raw_html_path": snapshot.raw_html_path,
-                    "screenshot_path": snapshot.screenshot_path,
-                    "parser_version": snapshot.parser_version,
-                    "created_at": snapshot.created_at,
-                    "updated_at": snapshot.updated_at,
-                },
+                snapshot=None,  # snapshot will be created by the bg task
             )
         elif body.address:
             # Manual address entry
