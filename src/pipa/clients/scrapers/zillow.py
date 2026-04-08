@@ -33,13 +33,562 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+import html as html_mod
 from typing import Any, Optional
 
 from pipa.clients.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-PARSER_VERSION = "2.0.0"  # Bumped: GraphQL-first approach
+PARSER_VERSION = "2.1.0"  # Added facts_and_features → typed fields normalization
+
+
+# ======================================================================
+# facts_and_features → typed fields normalizer
+# ======================================================================
+#
+# Zillow's "Facts & features" section on each detail page is captured by
+# the HTML DOM extractor as a dict[category_name -> list[item_string]].
+# This is rich data (rooms, HVAC, materials, HOA, etc.) but unstructured.
+#
+# _normalize_facts() walks the dict and produces ~50 typed top-level
+# fields that downstream code (resolver, AI Pass 1, condition engine,
+# UI) can read directly.
+#
+# Format observations from real listings:
+#   - Most items are "Key: Value" pairs ("Bedrooms: 4", "Roof: ...")
+#   - Some items are bare values ("Excellent", "Forced Air, Central, ...")
+#   - Multi-value lists are comma-separated within a single string
+#   - Per-room categories use the room name as the key
+#     (Primary bedroom, Bedroom 2, Kitchen, Family room, etc.)
+#   - Category names contain HTML entities (&amp;) — must be decoded
+#   - "Other" is a junk drawer for misc financial fields
+# ======================================================================
+
+# Categories whose names indicate per-room data (not feature categories).
+# Detected by looking for "Level:" / "Area:" / "Dimensions:" items inside.
+_NON_ROOM_CATEGORIES = {
+    "bedrooms & bathrooms", "rooms", "heating", "cooling", "appliances",
+    "features", "interior area", "video & virtual tour", "parking",
+    "accessibility", "lot", "details", "type & style", "materials",
+    "condition", "community", "hoa", "location", "other",
+    "construction", "utilities & green energy", "school information",
+}
+
+
+def _decode(s: str) -> str:
+    """Decode HTML entities in category names and values."""
+    return html_mod.unescape(s or "")
+
+
+def _strip_label(item: str, label: str) -> Optional[str]:
+    """If item starts with 'label:', return the value, otherwise None."""
+    prefix = f"{label}:"
+    if item.lower().startswith(prefix.lower()):
+        return item[len(prefix):].strip()
+    return None
+
+
+def _split_list(s: str) -> list[str]:
+    """Split a comma-separated value list, trimming whitespace."""
+    if not s:
+        return []
+    return [p.strip() for p in s.split(",") if p.strip()]
+
+
+def _parse_int(s: str) -> Optional[int]:
+    """Pull the first integer from a string. Handles commas."""
+    if not s:
+        return None
+    m = re.search(r"-?\d[\d,]*", s)
+    if not m:
+        return None
+    try:
+        return int(m.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _parse_money(s: str) -> Optional[int]:
+    """Pull a dollar amount from a string."""
+    if not s:
+        return None
+    m = re.search(r"\$?\s*([\d,]+)", s)
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _parse_dimensions(s: str) -> Optional[dict]:
+    """Parse 'Dimensions: 16 X 17' → {width: 16, length: 17}."""
+    if not s:
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)", s)
+    if not m:
+        return None
+    try:
+        return {"width": float(m.group(1)), "length": float(m.group(2))}
+    except ValueError:
+        return None
+
+
+def _looks_like_room_category(items: list[str]) -> bool:
+    """A category is a per-room category if any item starts with Level/Area/Dimensions."""
+    for item in items:
+        low = item.lower()
+        if low.startswith("level:") or low.startswith("area:") or low.startswith("dimensions:"):
+            return True
+    return False
+
+
+def _parse_room(name: str, items: list[str]) -> dict:
+    """Parse a per-room category into a structured dict.
+
+    Returns: {name, level, area_sqft, dimensions, features}
+    """
+    room: dict[str, Any] = {"name": name, "features": []}
+    for item in items:
+        item = _decode(item)
+        v = _strip_label(item, "Features")
+        if v is not None:
+            room["features"] = _split_list(v)
+            continue
+        v = _strip_label(item, "Level")
+        if v is not None:
+            room["level"] = v
+            continue
+        v = _strip_label(item, "Area")
+        if v is not None:
+            room["area_sqft"] = _parse_int(v)
+            continue
+        v = _strip_label(item, "Dimensions")
+        if v is not None:
+            room["dimensions"] = _parse_dimensions(v)
+            continue
+    return room
+
+
+def _normalize_facts(facts: dict[str, list[str]] | None) -> dict[str, Any]:
+    """Convert raw facts_and_features dict into typed top-level fields.
+
+    Returns a flat dict of new keys to merge into the scraped property
+    data. Unrecognized categories/items end up in `_facts_unrecognized`
+    so we can iterate later without losing data.
+    """
+    if not facts:
+        return {}
+
+    out: dict[str, Any] = {}
+    rooms: list[dict] = []
+    unrecognized: dict[str, list[str]] = {}
+
+    for raw_category, items in facts.items():
+        if not items:
+            continue
+        category = _decode(raw_category).strip()
+        cat_low = category.lower()
+
+        # Per-room categories (Primary bedroom, Bedroom 2, Kitchen, Family room, ...)
+        if cat_low not in _NON_ROOM_CATEGORIES and _looks_like_room_category(items):
+            rooms.append(_parse_room(category, items))
+            continue
+
+        # ----- Bedrooms & bathrooms -----
+        if cat_low == "bedrooms & bathrooms":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Bedrooms")
+                if v is not None:
+                    out["bedrooms"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Bathrooms")
+                if v is not None:
+                    out["bathrooms"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Full bathrooms")
+                if v is not None:
+                    out["full_bathrooms"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "1/2 bathrooms")
+                if v is not None:
+                    out["half_bathrooms"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Main level bathrooms")
+                if v is not None:
+                    out["main_level_bathrooms"] = _parse_int(v)
+                    continue
+            continue
+
+        # ----- Rooms (top-level summary) -----
+        if cat_low == "rooms":
+            for it in items:
+                v = _strip_label(_decode(it), "Room types")
+                if v is not None:
+                    out["room_types"] = _split_list(v)
+            continue
+
+        # ----- Heating / Cooling -----
+        if cat_low == "heating":
+            # Single item like "Forced Air, Humidity Control, ..., Natural Gas"
+            features = _split_list(_decode(items[0]))
+            out["heating_features"] = features
+            # Last token is usually the fuel
+            FUELS = {"natural gas", "electric", "oil", "propane", "geothermal", "solar"}
+            for f in features:
+                if f.lower() in FUELS:
+                    out["heating_fuel"] = f
+                    break
+            continue
+
+        if cat_low == "cooling":
+            features = _split_list(_decode(items[0]))
+            out["cooling_features"] = features
+            for f in features:
+                if f.lower() in {"electric", "natural gas"}:
+                    out["cooling_fuel"] = f
+                    break
+            continue
+
+        # ----- Appliances -----
+        if cat_low == "appliances":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Included")
+                if v is not None:
+                    out["appliances_included"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Laundry")
+                if v is not None:
+                    out["laundry_features"] = _split_list(v)
+                    continue
+            continue
+
+        # ----- Features (interior) -----
+        if cat_low == "features":
+            for it in items:
+                it = _decode(it)
+                # "Levels: Three"
+                v = _strip_label(it, "Levels")
+                if v is not None:
+                    out["levels"] = v
+                    continue
+                v = _strip_label(it, "Stories")
+                if v is not None:
+                    out["stories"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Patio & porch")
+                if v is not None:
+                    out["patio_porch"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Pool features")
+                if v is not None:
+                    out["pool_features"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Fencing")
+                if v is not None:
+                    out["fencing"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Flooring")
+                if v is not None:
+                    out["flooring"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Windows")
+                if v is not None:
+                    out["windows_features"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Basement")
+                if v is not None:
+                    out["basement_features"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Number of fireplaces")
+                if v is not None:
+                    out["fireplaces_count"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Fireplace features")
+                if v is not None:
+                    out["fireplace_features"] = _split_list(v)
+                    continue
+                # Bare item — append to interior_features
+                out.setdefault("interior_features", []).extend(_split_list(it))
+            continue
+
+        # ----- Interior area -----
+        if cat_low == "interior area":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Total structure area")
+                if v is not None:
+                    out["total_structure_area"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Total interior livable area")
+                if v is not None:
+                    out["total_livable_area"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Finished area above ground")
+                if v is not None:
+                    out["finished_above_ground"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Finished area below ground")
+                if v is not None:
+                    out["finished_below_ground"] = _parse_int(v)
+                    continue
+            continue
+
+        # ----- Parking -----
+        if cat_low == "parking":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Total spaces")
+                if v is not None:
+                    out["parking_total_spaces"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Parking features")
+                if v is not None:
+                    out["parking_features"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Attached garage spaces")
+                if v is not None:
+                    out["attached_garage_spaces"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Uncovered spaces")
+                if v is not None:
+                    out["uncovered_spaces"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Covered spaces")
+                if v is not None:
+                    out["covered_spaces"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Carport spaces")
+                if v is not None:
+                    out["carport_spaces"] = _parse_int(v)
+                    continue
+            continue
+
+        # ----- Accessibility -----
+        if cat_low == "accessibility":
+            for it in items:
+                v = _strip_label(_decode(it), "Accessibility features")
+                if v is not None and v.lower() != "none":
+                    out["accessibility_features"] = _split_list(v)
+            continue
+
+        # ----- Lot -----
+        if cat_low == "lot":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Size")
+                if v is not None:
+                    out["lot_sqft_listing"] = _parse_int(v)
+                    continue
+                v = _strip_label(it, "Features")
+                if v is not None:
+                    out["lot_features"] = _split_list(v)
+                    continue
+            continue
+
+        # ----- Details -----
+        if cat_low == "details":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Builder model")
+                if v is not None:
+                    out["builder_model"] = v
+                    continue
+                v = _strip_label(it, "Builder name")
+                if v is not None:
+                    out["builder_name"] = v
+                    continue
+                v = _strip_label(it, "Parcel number")
+                if v is not None:
+                    out["parcel_number"] = v
+                    continue
+                v = _strip_label(it, "Zoning")
+                if v is not None:
+                    out["zoning"] = v
+                    continue
+                v = _strip_label(it, "Special conditions")
+                if v is not None:
+                    out["special_conditions"] = v
+                    continue
+                v = _strip_label(it, "Additional structures")
+                if v is not None:
+                    out["additional_structures"] = _split_list(v)
+                    continue
+            continue
+
+        # ----- Type & style -----
+        if cat_low == "type & style":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Home type")
+                if v is not None:
+                    out["home_type_listing"] = v
+                    continue
+                v = _strip_label(it, "Architectural style")
+                if v is not None:
+                    out["architectural_style"] = v
+                    continue
+                v = _strip_label(it, "Property subtype")
+                if v is not None:
+                    out["property_subtype"] = v
+                    continue
+            continue
+
+        # ----- Materials / Foundation / Roof -----
+        if cat_low == "materials":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Foundation")
+                if v is not None:
+                    out["foundation_type"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Roof")
+                if v is not None:
+                    out["roof_material"] = _split_list(v)
+                    continue
+                # Bare item is the exterior material list
+                if not any(it.lower().startswith(p) for p in ("foundation:", "roof:")):
+                    out.setdefault("exterior_materials", []).extend(_split_list(it))
+            continue
+
+        # ----- Condition -----
+        if cat_low == "condition":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "New construction")
+                if v is not None:
+                    out["is_new_construction"] = v.strip().lower() in {"yes", "true"}
+                    continue
+                v = _strip_label(it, "Year built")
+                if v is not None:
+                    out["year_built"] = _parse_int(v)
+                    continue
+                # Bare condition word: "Excellent", "Average", etc.
+                if ":" not in it:
+                    out["zillow_condition"] = it
+            continue
+
+        # ----- Community -----
+        if cat_low == "community":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Security")
+                if v is not None:
+                    out["security_features"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Subdivision")
+                if v is not None:
+                    out["subdivision"] = v
+                    continue
+            continue
+
+        # ----- HOA -----
+        if cat_low == "hoa":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Has HOA")
+                if v is not None:
+                    out["has_hoa"] = v.strip().lower() in {"yes", "true"}
+                    continue
+                v = _strip_label(it, "Amenities included")
+                if v is not None:
+                    out["hoa_amenities"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Services included")
+                if v is not None:
+                    out["hoa_services"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "HOA fee")
+                if v is not None:
+                    # "$205 monthly" → 205, "monthly"
+                    out["hoa_monthly"] = _parse_money(v)
+                    if "month" in v.lower():
+                        out["hoa_frequency"] = "monthly"
+                    elif "annual" in v.lower() or "year" in v.lower():
+                        out["hoa_frequency"] = "annual"
+                    continue
+                v = _strip_label(it, "HOA name")
+                if v is not None:
+                    out["hoa_name"] = v
+                    continue
+                v = _strip_label(it, "HOA phone")
+                if v is not None:
+                    out["hoa_phone"] = v
+                    continue
+            continue
+
+        # ----- Utilities & green energy -----
+        if cat_low == "utilities & green energy":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Sewer")
+                if v is not None:
+                    out["sewer"] = v
+                    continue
+                v = _strip_label(it, "Water")
+                if v is not None:
+                    out["water"] = v
+                    continue
+                v = _strip_label(it, "Utilities for property")
+                if v is not None:
+                    out["utilities"] = _split_list(v)
+                    continue
+                v = _strip_label(it, "Electric")
+                if v is not None:
+                    out["electric"] = v
+                    continue
+            continue
+
+        # ----- Location -----
+        if cat_low == "location":
+            for it in items:
+                v = _strip_label(_decode(it), "Region")
+                if v is not None:
+                    out["region"] = v
+            continue
+
+        # ----- Other (financial junk drawer) -----
+        if cat_low == "other":
+            for it in items:
+                it = _decode(it)
+                v = _strip_label(it, "Price per square foot")
+                if v is not None:
+                    out["price_per_sqft"] = _parse_money(v)
+                    continue
+                v = _strip_label(it, "Tax assessed value")
+                if v is not None:
+                    out["tax_assessed_value_listing"] = _parse_money(v)
+                    continue
+                v = _strip_label(it, "Annual tax amount")
+                if v is not None:
+                    out["annual_tax_listing"] = _parse_money(v)
+                    continue
+                v = _strip_label(it, "Date on market")
+                if v is not None:
+                    out["date_on_market"] = v
+                    continue
+                v = _strip_label(it, "Listing agreement")
+                if v is not None:
+                    out["listing_agreement"] = v
+                    continue
+                v = _strip_label(it, "Ownership")
+                if v is not None:
+                    out["ownership_type"] = v
+                    continue
+            continue
+
+        # Unknown category — keep raw for inspection
+        unrecognized[category] = [_decode(it) for it in items]
+
+    if rooms:
+        out["rooms"] = rooms
+    if unrecognized:
+        out["_facts_unrecognized"] = unrecognized
+
+    return out
 
 
 class ZillowScraper(BaseScraper):
@@ -227,6 +776,34 @@ class ZillowScraper(BaseScraper):
                 logger.debug("HTML DOM filled %d fields (total: %d)", filled, len(html_data))
             else:
                 logger.debug("HTML DOM returned no data")
+
+            # ==============================================
+            # Layer 4: Normalize facts_and_features → typed fields
+            # ==============================================
+            # Turns the raw "Facts & features" dict (36 categories of
+            # "key: value" strings) into ~50 typed top-level fields:
+            # rooms, heating, cooling, materials, foundation, roof, HOA
+            # amenities, parking, etc. Downstream resolver/AI/UI consume
+            # these typed fields directly.
+            ff = result.get("facts_and_features")
+            if ff:
+                normalized = _normalize_facts(ff)
+                if normalized:
+                    new_keys = 0
+                    for k, v in normalized.items():
+                        # Don't clobber GraphQL-derived fields with the
+                        # less-precise listing-page values, but DO add new
+                        # ones.
+                        if k not in result or result[k] is None:
+                            result[k] = v
+                            new_keys += 1
+                    logger.info(
+                        "facts_and_features normalized: %d new typed fields "
+                        "(rooms=%d, unrecognized_cats=%d)",
+                        new_keys,
+                        len(normalized.get("rooms", [])),
+                        len(normalized.get("_facts_unrecognized", {})),
+                    )
 
             # Clean up None values
             result = {k: v for k, v in result.items() if v is not None}
@@ -756,6 +1333,13 @@ class ZillowScraper(BaseScraper):
                 result["description"] = text
 
         # Facts and features (all categories)
+        # NOTE: Zillow's listing page has TWO categories named "Features":
+        #   - Interior > Features  (Bar, Walk-In Shower, Flooring, Windows,
+        #     Basement, Number of fireplaces, Fireplace features, ...)
+        #   - Property > Features  (Levels, Stories, Patio & porch, Pool,
+        #     Fencing)
+        # We MERGE same-named categories so the downstream normalizer sees
+        # all the items, instead of letting one overwrite the other.
         fact_categories = re.findall(
             r'data-testid="fact-category"[^>]*>(.*?)(?=data-testid="fact-category"|data-testid="facts-and-features-wrapper-footer"|$)',
             html, re.DOTALL,
@@ -773,7 +1357,10 @@ class ZillowScraper(BaseScraper):
                     if text and len(text) > 2:
                         fact_list.append(text)
                 if fact_list:
-                    features[cat] = fact_list
+                    if cat in features:
+                        features[cat].extend(fact_list)
+                    else:
+                        features[cat] = fact_list
             if features:
                 result["facts_and_features"] = features
 

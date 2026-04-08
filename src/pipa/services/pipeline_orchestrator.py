@@ -534,12 +534,58 @@ async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 
     from pipa.services.ai_extraction import extract_all_from_listing
 
-    # Build listing facts for cross-reference
+    # Build listing facts for cross-reference. Includes:
+    #   - core typed fields (price/beds/baths/sqft/year)
+    #   - all the normalized facts_and_features fields parsed by the
+    #     Zillow scraper (HVAC, materials, foundation, roof, HOA,
+    #     parking, rooms, etc.) — see _normalize_facts in zillow.py
     listing_facts = {}
     if ctx.listing_data:
-        for key in ("price", "bedrooms", "bathrooms", "sqft", "lot_sqft",
-                     "year_built", "home_type", "hoa_monthly", "description",
-                     "above_grade_sqft", "below_grade_sqft", "basement_sqft"):
+        listing_fact_keys = (
+            # Core
+            "price", "bedrooms", "bathrooms", "full_bathrooms", "half_bathrooms",
+            "main_level_bathrooms", "sqft", "lot_sqft", "lot_sqft_listing",
+            "year_built", "home_type", "home_type_listing", "hoa_monthly",
+            "description", "above_grade_sqft", "below_grade_sqft", "basement_sqft",
+            "total_structure_area", "total_livable_area",
+            "finished_above_ground", "finished_below_ground",
+            # Construction / materials
+            "architectural_style", "property_subtype", "exterior_materials",
+            "foundation_type", "roof_material", "zillow_condition",
+            "is_new_construction", "builder_model", "builder_name",
+            "stories", "levels",
+            # HVAC / systems
+            "heating_features", "heating_fuel",
+            "cooling_features", "cooling_fuel",
+            "appliances_included", "laundry_features",
+            # Interior
+            "interior_features", "flooring", "windows_features",
+            "basement_features", "fireplaces_count", "fireplace_features",
+            # Exterior / lot
+            "patio_porch", "pool_features", "fencing", "lot_features",
+            "additional_structures",
+            # Parking
+            "parking_total_spaces", "parking_features",
+            "attached_garage_spaces", "uncovered_spaces", "covered_spaces",
+            "carport_spaces",
+            # HOA / community
+            "has_hoa", "hoa_amenities", "hoa_services", "hoa_name",
+            "hoa_frequency", "subdivision", "security_features",
+            # Utilities
+            "sewer", "water", "utilities", "electric",
+            # Tax / financial
+            "tax_assessed_value_listing", "annual_tax_listing",
+            "price_per_sqft", "date_on_market",
+            "listing_agreement", "ownership_type",
+            # Identity
+            "parcel_number", "parcel_id", "zoning", "special_conditions",
+            "region",
+            # Per-room data (rich layout info)
+            "rooms", "room_types",
+            # Accessibility
+            "accessibility_features",
+        )
+        for key in listing_fact_keys:
             if ctx.listing_data.get(key) is not None:
                 listing_facts[key] = ctx.listing_data[key]
 

@@ -118,6 +118,44 @@ function getCountyFields(state) {
 
 // ── Render ─────────────────────────────────────────────────────────
 
+/**
+ * Render a side-by-side comparison cell when both listing and county
+ * have a value. Highlights when they don't agree.
+ *
+ * Returns a single cell with both values stacked, or a normal cell when
+ * only one source has data.
+ */
+function comparisonCell(label, listingVal, countyVal) {
+    const lShow = (listingVal != null && listingVal !== '');
+    const cShow = (countyVal != null && countyVal !== '');
+    if (!lShow && !cShow) {
+        return metricCell(label, '--', '');
+    }
+    if (lShow && !cShow) {
+        return metricCell(label, String(listingVal), 'L');
+    }
+    if (!lShow && cShow) {
+        return metricCell(label, String(countyVal), 'C');
+    }
+    // Both — stack them; flag mismatch.
+    const lStr = String(listingVal).toLowerCase().trim();
+    const cStr = String(countyVal).toLowerCase().trim();
+    const mismatch = lStr !== cStr;
+    const mismatchClass = mismatch ? 'border-l-2 border-amber-400 pl-2' : '';
+    return `
+    <div class="py-1 ${mismatchClass}">
+        <div class="text-[11px] text-gray-500 uppercase tracking-wide leading-tight">${escapeHtml(label)}</div>
+        <div class="text-xs leading-snug">
+            <span class="text-gray-300">L:</span>
+            <span class="font-semibold text-gray-900">${escapeHtml(String(listingVal))}</span>
+        </div>
+        <div class="text-xs leading-snug">
+            <span class="text-gray-300">C:</span>
+            <span class="font-semibold text-gray-900">${escapeHtml(String(countyVal))}</span>
+        </div>
+    </div>`;
+}
+
 export function render(state) {
     const ld = state.listingData || {};
     const county = getCountyFields(state);
@@ -125,7 +163,7 @@ export function render(state) {
 
     const cells = [];
 
-    // ── Listing fields (L) ────────────────────────────────────────
+    // ── Pricing & core listing fields ─────────────────────────────
     const price = ld.price;
     cells.push(metricCell('Price', fmtCur(price) || '--', 'L'));
     cells.push(metricCell('Beds', ld.bedrooms || ld.beds || '--', 'L'));
@@ -134,7 +172,8 @@ export function render(state) {
     const sqft = ld.sqft ? Number(ld.sqft) : null;
     cells.push(metricCell('Sqft', fmtNum(sqft) || '--', 'L'));
 
-    const lotSqft = ld.lot_sqft ? Number(ld.lot_sqft) : null;
+    const lotSqftListing = ld.lot_sqft_listing || ld.lot_sqft;
+    const lotSqft = lotSqftListing ? Number(lotSqftListing) : null;
     const lotAcres = ld.lot_acres ? Number(ld.lot_acres) : (county.lot_acres ? parseFloat(county.lot_acres) : null);
     const lotDisplay = lotSqft ? `${fmtNum(lotSqft)} sf` : lotAcres ? `${lotAcres.toFixed(2)} ac` : '--';
     cells.push(metricCell('Lot', lotDisplay, 'L'));
@@ -151,7 +190,7 @@ export function render(state) {
         : '--';
     cells.push(metricCell('DOM/CDOM', domDisplay, 'L'));
 
-    cells.push(metricCell('Type', ld.home_type || '--', 'L'));
+    cells.push(metricCell('Type', ld.home_type_listing || ld.home_type || '--', 'L'));
 
     // ── Computed fields (=) ───────────────────────────────────────
     const priceSqft = (price && sqft) ? `${fmtCur(Math.round(price / sqft))}/sf` : '--';
@@ -170,22 +209,97 @@ export function render(state) {
         : null;
     cells.push(metricCell('Unfin. Bsmt', bsmtUnfinished != null && !Number.isNaN(bsmtUnfinished) ? `${fmtNum(bsmtUnfinished)} sf` : '--', '='));
 
-    // ── County fields (C) ─────────────────────────────────────────
-    cells.push(metricCell('Sqft Above', fmtNum(aboveGrade) || '--', 'C'));
-    cells.push(metricCell('Full Baths', county.full_baths || '--', 'C'));
-    cells.push(metricCell('Half Baths', county.half_baths || '--', 'C'));
-    cells.push(metricCell('Stories', county.stories || '--', 'C'));
-    cells.push(metricCell('Bsmt Total', bsmtTotal ? `${fmtNum(bsmtTotal)} sf` : '--', 'C'));
-    cells.push(metricCell('Bsmt Fin.', bsmtFinished ? `${fmtNum(bsmtFinished)} sf` : '--', 'C'));
-    cells.push(metricCell('Ext. Wall', county.exterior_wall || '--', 'C'));
+    // ── Side-by-side L vs C comparison cells ─────────────────────
+    // These compare listing facts (parsed from facts_and_features) against
+    // county records. When they differ, the cell is highlighted.
+    cells.push(comparisonCell('Sqft Above',
+        ld.finished_above_ground ? `${fmtNum(ld.finished_above_ground)} sf` : null,
+        aboveGrade ? `${fmtNum(aboveGrade)} sf` : null));
+    cells.push(comparisonCell('Sqft Below',
+        ld.finished_below_ground ? `${fmtNum(ld.finished_below_ground)} sf` : null,
+        bsmtFinished ? `${fmtNum(bsmtFinished)} sf` : null));
+    cells.push(comparisonCell('Stories', ld.stories, county.stories));
+    cells.push(comparisonCell('Full Baths', ld.full_bathrooms, county.full_baths));
+    cells.push(comparisonCell('Half Baths', ld.half_bathrooms, county.half_baths));
+    cells.push(comparisonCell('Fireplaces',
+        ld.fireplaces_count != null ? ld.fireplaces_count : null,
+        county.fireplaces));
+    cells.push(comparisonCell('Subdivision',
+        ld.subdivision || ld.subdivision_listing,
+        county.subdivision));
+    cells.push(comparisonCell('Condition',
+        ld.zillow_condition,
+        county.condition));
+    cells.push(comparisonCell('Style',
+        ld.architectural_style,
+        county.style));
+    cells.push(comparisonCell('Builder Model',
+        ld.builder_model,
+        county.model));
+    cells.push(comparisonCell('Foundation',
+        Array.isArray(ld.foundation_type) ? ld.foundation_type.join(', ') : ld.foundation_type,
+        county.foundation));
+    cells.push(comparisonCell('Roof',
+        Array.isArray(ld.roof_material) ? ld.roof_material.join(', ') : ld.roof_material,
+        county.roof_material));
+    cells.push(comparisonCell('Exterior',
+        Array.isArray(ld.exterior_materials) ? ld.exterior_materials.join(', ') : ld.exterior_materials,
+        county.exterior_wall));
+    cells.push(comparisonCell('Year Built',
+        ld.year_built,
+        county.year_built));
+
+    // ── Listing-only structural facts (no county equivalent) ─────
+    if (ld.heating_fuel) {
+        cells.push(metricCell('Heating', ld.heating_fuel, 'L'));
+    }
+    if (ld.cooling_fuel) {
+        cells.push(metricCell('Cooling', ld.cooling_fuel, 'L'));
+    }
+    if (ld.parking_total_spaces != null) {
+        cells.push(metricCell('Parking', String(ld.parking_total_spaces), 'L'));
+    }
+    if (ld.attached_garage_spaces != null) {
+        cells.push(metricCell('Garage', String(ld.attached_garage_spaces), 'L'));
+    }
+    if (ld.has_hoa && ld.hoa_name) {
+        cells.push(metricCell('HOA Name', ld.hoa_name, 'L'));
+    }
+    if (Array.isArray(ld.hoa_amenities) && ld.hoa_amenities.length > 0) {
+        cells.push(metricCell('HOA Amenities', `${ld.hoa_amenities.length} listed`, 'L'));
+    }
+    if (ld.sewer) {
+        cells.push(metricCell('Sewer', ld.sewer, 'L'));
+    }
+    if (ld.water) {
+        cells.push(metricCell('Water', ld.water, 'L'));
+    }
+    if (ld.zoning) {
+        cells.push(metricCell('Zoning', ld.zoning, 'L'));
+    }
+    if (ld.region) {
+        cells.push(metricCell('Region', ld.region, 'L'));
+    }
+    if (ld.tax_assessed_value_listing) {
+        cells.push(metricCell('Tax Assessed', fmtCur(ld.tax_assessed_value_listing) || '--', 'L'));
+    }
+    if (ld.annual_tax_listing) {
+        cells.push(metricCell('Annual Tax', fmtCur(ld.annual_tax_listing) || '--', 'L'));
+    }
+    if (ld.total_structure_area) {
+        cells.push(metricCell('Total Struct.', `${fmtNum(ld.total_structure_area)} sf`, 'L'));
+    }
+    if (ld.total_livable_area) {
+        cells.push(metricCell('Total Livable', `${fmtNum(ld.total_livable_area)} sf`, 'L'));
+    }
+
+    // ── County-only fields (no listing equivalent in facts) ───────
+    if (county.bsmt_total_sqft || bsmtTotal) {
+        cells.push(metricCell('Bsmt Total', bsmtTotal ? `${fmtNum(bsmtTotal)} sf` : '--', 'C'));
+    }
+    cells.push(metricCell('HVAC (county)', county.heating_ac || '--', 'C'));
     cells.push(metricCell('Roof Type', county.roof_type || '--', 'C'));
-    cells.push(metricCell('Roof Matl', county.roof_material || '--', 'C'));
-    cells.push(metricCell('HVAC', county.heating_ac || '--', 'C'));
-    cells.push(metricCell('Foundation', county.foundation || '--', 'C'));
-    cells.push(metricCell('Fireplaces', county.fireplaces != null ? String(county.fireplaces) : '--', 'C'));
     cells.push(metricCell('Attic', county.attic_type || '--', 'C'));
-    cells.push(metricCell('Subdivision', county.subdivision || '--', 'C'));
-    cells.push(metricCell('Condition', county.condition || '--', 'C'));
     cells.push(metricCell('Grade', county.grade || '--', 'C'));
 
     // ── Flood Zone (FEMA) ───────────────────────────────────────

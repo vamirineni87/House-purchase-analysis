@@ -332,6 +332,149 @@ def _resolve_canonical(
             "severity": "warning" if abs(sqft_listing - above) / above < 0.3 else "critical",
         })
 
+    # ----------------------------------------------------------------
+    # Pass-through: rich Zillow facts_and_features fields
+    # ----------------------------------------------------------------
+    # These preserve all the structured listing data (rooms, HVAC,
+    # materials, HOA amenities, etc.) into canonical so the UI and
+    # AI Pass 1 can read them. Where a field could clash with county
+    # (roof_material, foundation, subdivision, stories), we keep both
+    # under separate keys (suffix _listing) instead of letting the
+    # ranked merge silently drop the listing version.
+    LISTING_PASSTHROUGH = (
+        # Construction
+        "architectural_style", "property_subtype",
+        "exterior_materials", "foundation_type", "zillow_condition",
+        "is_new_construction", "builder_model", "builder_name",
+        "levels", "stories",
+        # HVAC / systems
+        "heating_features", "heating_fuel",
+        "cooling_features", "cooling_fuel",
+        "appliances_included", "laundry_features",
+        # Interior
+        "interior_features", "flooring", "windows_features",
+        "basement_features", "fireplaces_count", "fireplace_features",
+        # Sqft
+        "total_structure_area", "total_livable_area",
+        "finished_above_ground", "finished_below_ground",
+        # Exterior / lot
+        "patio_porch", "pool_features", "fencing", "lot_features",
+        "additional_structures", "lot_sqft_listing",
+        # Parking
+        "parking_total_spaces", "parking_features",
+        "attached_garage_spaces", "uncovered_spaces",
+        "covered_spaces", "carport_spaces",
+        # HOA
+        "has_hoa", "hoa_amenities", "hoa_services", "hoa_name",
+        "hoa_frequency",
+        # Community
+        "security_features", "region",
+        # Utilities
+        "sewer", "water", "utilities", "electric",
+        # Tax / financial
+        "tax_assessed_value_listing", "annual_tax_listing",
+        "price_per_sqft", "date_on_market",
+        "listing_agreement", "ownership_type",
+        # Identity
+        "parcel_number", "zoning", "special_conditions",
+        # Per-room data
+        "rooms", "room_types",
+        "main_level_bathrooms",
+        # Accessibility
+        "accessibility_features",
+    )
+    for k in LISTING_PASSTHROUGH:
+        if listing.get(k) is not None and k not in canonical:
+            canonical[k] = listing[k]
+
+    # Fields that exist in BOTH listing and county under similar names —
+    # store the listing version under a _listing suffix so the ranked
+    # county value (already in canonical) is preserved AND the listing
+    # value is available for AI cross-reference.
+    listing_dual_map = {
+        "roof_material": "roof_material_listing",
+        "foundation_type": "foundation_listing",
+        "subdivision": "subdivision_listing",
+    }
+    for src, dst in listing_dual_map.items():
+        v = listing.get(src)
+        if v is not None:
+            canonical[dst] = v
+
+    # ----------------------------------------------------------------
+    # Deterministic cross-checks: listing facts vs county facts
+    # These produce conflict entries when there's an exact, objective
+    # mismatch (no fuzzy string compare). Qualitative comparisons
+    # (roof_material strings, HVAC type wording) are left to the AI
+    # validator.
+    # ----------------------------------------------------------------
+
+    # finished_above_ground (listing) vs sqft_above_grade (county) — only
+    # makes sense when county data exists; `above` was loaded from
+    # canonical.sqft_above_grade above and is county-only.
+    fin_above = _to_int(listing.get("finished_above_ground"))
+    if above and fin_above and abs(fin_above - above) > 100:
+        conflicts.append({
+            "field": "above_grade_sqft",
+            "canonical_value": above,
+            "canonical_source": "county",
+            "conflicting_value": fin_above,
+            "conflicting_source": "listing (finished_above_ground)",
+            "severity": "warning",
+        })
+
+    # parcel_number (listing facts) vs parcel_id (county) — compare against
+    # the RAW county dict, not canonical, so we don't accidentally compare
+    # listing-vs-listing when county didn't provide a parcel_id.
+    listing_parcel = listing.get("parcel_number") or listing.get("parcel_id")
+    county_parcel = county.get("parcel_id") if county else None
+    if listing_parcel and county_parcel and str(listing_parcel) != str(county_parcel):
+        conflicts.append({
+            "field": "parcel_id",
+            "canonical_value": county_parcel,
+            "canonical_source": "county",
+            "conflicting_value": listing_parcel,
+            "conflicting_source": "listing",
+            "severity": "critical",
+        })
+
+    # listing lot_sqft vs county lot_acres (convert acres → sqft) — read
+    # county lot_acres directly so we know we're comparing across sources.
+    lot_sqft_listing = _to_int(listing.get("lot_sqft_listing"))
+    lot_acres_county = county.get("lot_acres") if county else None
+    if lot_sqft_listing and lot_acres_county:
+        try:
+            county_lot_sqft = int(float(lot_acres_county) * 43560)
+            if abs(county_lot_sqft - lot_sqft_listing) / max(county_lot_sqft, 1) > 0.10:
+                conflicts.append({
+                    "field": "lot_sqft",
+                    "canonical_value": county_lot_sqft,
+                    "canonical_source": f"county ({lot_acres_county} acres)",
+                    "conflicting_value": lot_sqft_listing,
+                    "conflicting_source": "listing",
+                    "severity": "info",
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # Internal consistency: listing total_livable_area should ≈
+    # listing finished_above_ground + listing finished_below_ground.
+    # Read directly from listing so we know all 3 come from the same source.
+    fin_below = _to_int(listing.get("finished_below_ground"))
+    fin_above_check = _to_int(listing.get("finished_above_ground"))
+    livable_listing = _to_int(listing.get("total_livable_area"))
+    if livable_listing and fin_above_check and fin_below is not None:
+        expected = fin_above_check + fin_below
+        if abs(expected - livable_listing) > 50:
+            conflicts.append({
+                "field": "total_livable_area",
+                "canonical_value": expected,
+                "canonical_source": "listing (above + below)",
+                "conflicting_value": livable_listing,
+                "conflicting_source": "listing (total_livable_area)",
+                "severity": "info",
+            })
+
     # Track unknowns
     critical_fields = [
         "year_built", "sqft_above_grade", "asking_price",
