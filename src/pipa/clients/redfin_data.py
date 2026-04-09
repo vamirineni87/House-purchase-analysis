@@ -9,7 +9,9 @@ Data includes: median sale price, homes sold, inventory, DOM, sale-to-list ratio
 
 from __future__ import annotations
 
+import asyncio
 import csv
+import gzip
 import io
 import logging
 from datetime import datetime, timezone
@@ -19,6 +21,22 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _decompress_and_write(content: bytes, cache_path: Path, region_type: str) -> None:
+    """Synchronous helper: gunzip + write to disk.
+
+    Run inside asyncio.to_thread() so the multi-hundred-MB decompression
+    + disk write doesn't block the FastAPI event loop.
+    """
+    data = gzip.decompress(content)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(data)
+    logger.info(
+        "Redfin %s data downloaded: %.1f MB",
+        region_type,
+        len(data) / 1_000_000,
+    )
 
 # Redfin public data URLs (TSV format)
 # These are direct download links from the Redfin Data Center
@@ -146,7 +164,17 @@ class RedfinDataClient:
     async def _load_filtered(
         self, region_type: str, region_value: str, months: int
     ) -> list[dict]:
-        """Download (cached) TSV, filter to region, return dicts."""
+        """Download (cached) TSV, filter to region, return dicts.
+
+        IMPORTANT: the gzip decompress + disk write + TSV parse are all
+        synchronous CPU-bound operations on a multi-hundred-MB file.
+        They run inside ``asyncio.to_thread`` so they don't block the
+        FastAPI event loop while the user's other GET requests are
+        waiting (e.g. /schools, /decision/packet, /county). Without this
+        wrapper, refreshing the property detail page caused EVERY tab's
+        request to stall for 60-180 seconds while one big sync block
+        ran on the loop.
+        """
         cache_path = self.cache_dir / f"{region_type}_market.tsv"
 
         # Check if cache is fresh
@@ -156,7 +184,9 @@ class RedfinDataClient:
             ) / 3600
             if age_hours < self.cache_ttl_hours:
                 logger.debug("Using cached Redfin %s data (%d hours old)", region_type, int(age_hours))
-                return self._parse_tsv(cache_path, "region", region_value, months)
+                return await asyncio.to_thread(
+                    self._parse_tsv, cache_path, "region", region_value, months
+                )
 
         # Download
         url = _REGION_URLS.get(region_type)
@@ -169,29 +199,33 @@ class RedfinDataClient:
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
+                content = resp.content
 
-            # Decompress gzip
-            import gzip
-            data = gzip.decompress(resp.content)
-            cache_path.write_bytes(data)
-            logger.info(
-                "Redfin %s data downloaded: %.1f MB",
-                region_type,
-                len(data) / 1_000_000,
+            # Decompress + write — synchronous on hundreds of MB. Run in
+            # a thread so the event loop stays responsive.
+            await asyncio.to_thread(
+                _decompress_and_write, content, cache_path, region_type
             )
         except Exception:
             logger.exception("Failed to download Redfin %s data", region_type)
             # Fall back to stale cache if it exists
             if cache_path.exists():
-                return self._parse_tsv(cache_path, "region", region_value, months)
+                return await asyncio.to_thread(
+                    self._parse_tsv, cache_path, "region", region_value, months
+                )
             return []
 
-        return self._parse_tsv(cache_path, "region", region_value, months)
+        return await asyncio.to_thread(
+            self._parse_tsv, cache_path, "region", region_value, months
+        )
 
     async def _load_filtered_county(
         self, county_name: str, state: str, months: int
     ) -> list[dict]:
-        """Load county data, filter by county name + state."""
+        """Load county data, filter by county name + state.
+
+        See _load_filtered for the rationale on asyncio.to_thread.
+        """
         cache_path = self.cache_dir / "county_market.tsv"
 
         if cache_path.exists():
@@ -199,7 +233,9 @@ class RedfinDataClient:
                 datetime.now(timezone.utc).timestamp() - cache_path.stat().st_mtime
             ) / 3600
             if age_hours < self.cache_ttl_hours:
-                return self._parse_tsv_county(cache_path, county_name, state, months)
+                return await asyncio.to_thread(
+                    self._parse_tsv_county, cache_path, county_name, state, months
+                )
 
         url = _REGION_URLS["county"]
         logger.info("Downloading Redfin county market data...")
@@ -207,16 +243,21 @@ class RedfinDataClient:
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
-            import gzip
-            data = gzip.decompress(resp.content)
-            cache_path.write_bytes(data)
+                content = resp.content
+            await asyncio.to_thread(
+                _decompress_and_write, content, cache_path, "county"
+            )
         except Exception:
             logger.exception("Failed to download Redfin county data")
             if cache_path.exists():
-                return self._parse_tsv_county(cache_path, county_name, state, months)
+                return await asyncio.to_thread(
+                    self._parse_tsv_county, cache_path, county_name, state, months
+                )
             return []
 
-        return self._parse_tsv_county(cache_path, county_name, state, months)
+        return await asyncio.to_thread(
+            self._parse_tsv_county, cache_path, county_name, state, months
+        )
 
     def _parse_tsv(
         self, path: Path, filter_col: str, filter_val: str, months: int

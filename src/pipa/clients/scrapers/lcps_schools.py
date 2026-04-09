@@ -433,20 +433,79 @@ class LCPSSchoolScraper(BaseScraper):
         return info
 
     @staticmethod
-    def _clean_school_name(text: str, level: str) -> str:
-        """Clean up a school name extracted from Qlik."""
-        # Remove common prefixes/suffixes
+    def _clean_school_name(text: str, level: str) -> Optional[str]:
+        """Clean up a school name extracted from Qlik.
+
+        Real Qlik object text we see in the wild includes the dashboard's
+        accessibility label baked into the text content. Examples:
+
+            "Text & image ES Name Legacy ES"          → "Legacy ES"
+            "Text & image MS Name Brambleton MS"      → "Brambleton MS"
+            "Text & image HS Name Independence HS"    → "Independence HS"
+            "Button for navigation ES city state zip NY Ashburn, VA 20148"
+                → None  (this is the future-school nav button placeholder,
+                  not an actual school name)
+            "Elementary School: Legacy ES"            → "Legacy ES"
+            "Legacy ES"                               → "Legacy ES"
+        """
+        if not text:
+            return None
         text = text.strip()
-        # Sometimes the text includes the label like "Elementary School:"
-        text = re.sub(r"^(Elementary|Middle|High)\s+School\s*:?\s*", "", text, flags=re.IGNORECASE)
-        return text.strip()
+
+        # Reject the future-school nav button placeholder — it has no
+        # actual school name, just a "click to navigate" accessibility
+        # label with city/state/zip.
+        if text.lower().startswith("button for navigation"):
+            return None
+
+        # Strip the "Text & image <LEVEL> Name " accessibility prefix
+        # that Qlik bakes into the visible text content.
+        # The pattern is: "Text & image" + level abbreviation (ES/MS/HS)
+        # OR full word + "Name" + actual school name.
+        text = re.sub(
+            r"^Text\s*&\s*image\s+(?:ES|MS|HS|Elementary|Middle|High)\s+Name\s+",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        # Strip "Elementary School:" / "Middle School:" / "High School:" prefix
+        text = re.sub(
+            r"^(Elementary|Middle|High)\s+School\s*:?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        text = text.strip()
+        return text or None
 
     @staticmethod
-    def _clean_principal_name(text: str) -> str:
-        """Clean up a principal name extracted from Qlik."""
+    def _clean_principal_name(text: str) -> Optional[str]:
+        """Clean up a principal name extracted from Qlik.
+
+        Examples:
+            "Text & image ES Principal O'Hara, Kirsten" → "O'Hara, Kirsten"
+            "Principal: Marple, Robert"                 → "Marple, Robert"
+            "O'Hara, Kirsten"                           → "O'Hara, Kirsten"
+        """
+        if not text:
+            return None
         text = text.strip()
+
+        # Strip the "Text & image <LEVEL> Principal " accessibility prefix.
+        text = re.sub(
+            r"^Text\s*&\s*image\s+(?:ES|MS|HS|Elementary|Middle|High)\s+Principal\s+",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        # Strip plain "Principal:" prefix
         text = re.sub(r"^Principal\s*:?\s*", "", text, flags=re.IGNORECASE)
-        return text.strip()
+
+        text = text.strip()
+        return text or None
 
     def _detect_school_year(self, objects: dict[int, str], future: bool = False) -> str:
         """Detect the school year from Qlik object text.
@@ -480,14 +539,27 @@ class LCPSSchoolScraper(BaseScraper):
         return f"{years_found[0][0]}-{years_found[0][1]}"
 
     def _extract_school_board_member(self, objects: dict[int, str]) -> Optional[str]:
-        """Extract school board member name from Qlik objects."""
+        """Extract school board member name from Qlik objects.
+
+        Real-world Qlik text:
+            "Member School Board Member: Sumera Rashid"  → "Sumera Rashid"
+            "School Board Member: Jane Doe"              → "Jane Doe"
+        The "Member " prefix and the trailing colon both come from the
+        Qlik dashboard's accessibility label format.
+        """
         for text in objects.values():
+            # Strip the leading "Member " accessibility token if present
+            cleaned = re.sub(r"^Member\s+", "", text, flags=re.IGNORECASE)
             match = re.search(
                 r"(?:School\s+Board|Board\s+Member)\s*:?\s*(.+?)(?:\s*\||$)",
-                text, re.IGNORECASE,
+                cleaned, re.IGNORECASE,
             )
             if match:
-                return match.group(1).strip()
+                name = match.group(1).strip()
+                # Skip if the captured value is empty or still looks like
+                # a label artifact (e.g. "Member" alone).
+                if name and name.lower() not in ("member", "name"):
+                    return name
         return None
 
     @staticmethod
