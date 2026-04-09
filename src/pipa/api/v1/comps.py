@@ -95,7 +95,7 @@ async def deep_comp(
     await _verify_property(db, property_id)
 
     subject_data = None
-    max_comps = 6
+    max_comps = 8
     if body:
         max_comps = body.max_comps
         if any([body.list_price, body.sqft, body.beds, body.baths, body.year_built]):
@@ -186,7 +186,7 @@ async def run_comp_analysis(
     await _verify_property(db, property_id)
 
     subject_data = None
-    max_comps = 6
+    max_comps = 8
     if body:
         max_comps = body.max_comps
         if any([body.list_price, body.sqft, body.beds, body.baths, body.year_built]):

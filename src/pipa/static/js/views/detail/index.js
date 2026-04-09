@@ -157,16 +157,17 @@ export async function load(container, params) {
 // ---------------------------------------------------------------
 //
 // While the latest pipeline run is `running` or `queued`, poll
-// every 5 seconds. When it transitions to a terminal state
+// every 30 seconds. When it transitions to a terminal state
 // (succeeded / failed / partial_success / cancelled), refetch all
 // the lazy data so the page picks up the new packet, AI extraction,
 // schools, etc. without the user having to manually refresh.
 
 let _pollTimer = null;
+const _POLL_INTERVAL_MS = 30_000;
 
 function startPipelinePolling() {
     stopPipelinePolling();
-    _pollTimer = setInterval(_pollPipelineStatus, 5000);
+    _pollTimer = setInterval(_pollPipelineStatus, _POLL_INTERVAL_MS);
 }
 
 function stopPipelinePolling() {

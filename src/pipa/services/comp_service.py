@@ -280,7 +280,7 @@ class CompService:
         db: AsyncSession,
         property_id: str,
         subject_data: dict | None = None,
-        max_comps: int = 6,
+        max_comps: int = 8,
     ) -> dict:
         """County-verified comp analysis — slow (~2 min).
 
@@ -1623,7 +1623,7 @@ class CompService:
     async def build_verified_comps(
         db: AsyncSession,
         property_id: str,
-        max_comps: int = 6,
+        max_comps: int = 8,
     ) -> list[EnrichedComp]:
         """Full pipeline: find candidates, enrich from county, return verified comps.
 
@@ -1653,7 +1653,7 @@ class CompService:
         db: AsyncSession,
         property_id: str,
         subject_data: dict | None = None,
-        max_comps: int = 6,
+        max_comps: int = 8,
     ) -> dict:
         """End-to-end: source comps, enrich, run appraisal analysis.
 

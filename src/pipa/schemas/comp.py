@@ -163,7 +163,7 @@ class CompAnalysisResult(BaseModel):
 class CompAnalysisRequest(BaseModel):
     """Optional overrides for comp analysis."""
 
-    max_comps: int = 6
+    max_comps: int = 8
     list_price: Optional[float] = None
     sqft: Optional[int] = None
     beds: Optional[int] = None
