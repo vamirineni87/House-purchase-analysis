@@ -49,7 +49,15 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
     "refresh_zillow": ["zillow_scrape", "ai_pass_1", "resolver"],
     "refresh_county": ["county_scrape", "resolver"],
     "run_deep_comp": ["comp_deep"],
-    "rerun_ai": ["ai_pass_1", "ai_pass_2"],
+    # AI Pass 1 = extraction (components, red flags, motivation, validation
+    # against county). Stand-alone version for the "Run pre-AI" button.
+    "rerun_ai_pass_1": ["ai_pass_1"],
+    # AI Pass 2 = synthesis (buyer-facing recommendation, narrative). Needs
+    # AI Pass 1 results to already exist. Stand-alone version for the
+    # "Run AI recommendation" button.
+    "rerun_ai_pass_2": ["ai_pass_2", "decision_packet"],
+    # Both passes back-to-back (legacy convenience).
+    "rerun_ai": ["ai_pass_1", "ai_pass_2", "decision_packet"],
     "rerun_financials": ["financial", "tax", "condition", "offer", "stress"],
 }
 

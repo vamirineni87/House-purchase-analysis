@@ -143,6 +143,72 @@ export async function load(container, params) {
 
     // Phase 2: Lazy loads (non-blocking)
     lazyLoadAll();
+
+    // Phase 3: If a pipeline is currently running/queued, start polling
+    // so we can pick up the results when it finishes without the user
+    // having to refresh manually.
+    if (_state.latestRun && (_state.latestRun.status === 'running' || _state.latestRun.status === 'queued')) {
+        startPipelinePolling();
+    }
+}
+
+// ---------------------------------------------------------------
+// Pipeline run polling
+// ---------------------------------------------------------------
+//
+// While the latest pipeline run is `running` or `queued`, poll
+// every 5 seconds. When it transitions to a terminal state
+// (succeeded / failed / partial_success / cancelled), refetch all
+// the lazy data so the page picks up the new packet, AI extraction,
+// schools, etc. without the user having to manually refresh.
+
+let _pollTimer = null;
+
+function startPipelinePolling() {
+    stopPipelinePolling();
+    _pollTimer = setInterval(_pollPipelineStatus, 5000);
+}
+
+function stopPipelinePolling() {
+    if (_pollTimer != null) {
+        clearInterval(_pollTimer);
+        _pollTimer = null;
+    }
+}
+
+async function _pollPipelineStatus() {
+    if (!_state.propertyId || !_container) {
+        stopPipelinePolling();
+        return;
+    }
+    try {
+        const runs = await api.getPipelineRuns(_state.propertyId, 1);
+        const latest = Array.isArray(runs) ? runs[0] : null;
+        if (!latest) return;
+
+        const prevStatus = _state.latestRun?.status;
+        _state.latestRun = latest;
+        _state.pipelineRuns[0] = latest;
+
+        // Re-render header so the pipeline status pill + button-disabled
+        // state stay current.
+        renderPage(_container);
+        bindPage(_container);
+
+        const terminal = ['succeeded', 'failed', 'partial_success', 'cancelled'];
+        if (terminal.includes(latest.status)) {
+            stopPipelinePolling();
+            // Pipeline just finished — refetch all the lazy data so the
+            // detail sections show the new analysis results.
+            if (prevStatus !== latest.status) {
+                showToast(`Pipeline ${latest.status}`,
+                    latest.status === 'succeeded' ? 'success' : 'warning');
+                lazyLoadAll();
+            }
+        }
+    } catch (err) {
+        // Polling failures are silent — we just try again in 5s.
+    }
 }
 
 // ---------------------------------------------------------------
@@ -414,7 +480,8 @@ async function handleAction(actionId, container) {
             const run = await api.runPipeline(_state.propertyId, 'full_pipeline');
             _state.latestRun = run;
             _state.pipelineRuns = [run, ..._state.pipelineRuns];
-            showToast('Analysis started', 'success');
+            showToast('Analysis started — polling for results', 'success');
+            startPipelinePolling();
         },
         'action-refresh-listing': async () => {
             await api.refreshSource(_state.propertyId, 'zillow');
@@ -441,11 +508,19 @@ async function handleAction(actionId, container) {
             _state.deepComp = result;
             showToast('Deep comp complete', 'success');
         },
-        'action-rerun-ai': async () => {
-            const run = await api.runPipeline(_state.propertyId, 'rerun_ai');
+        'action-rerun-ai-pass-1': async () => {
+            const run = await api.runPipeline(_state.propertyId, 'rerun_ai_pass_1');
             _state.latestRun = run;
             _state.pipelineRuns = [run, ..._state.pipelineRuns];
-            showToast('AI rerun started', 'success');
+            showToast('AI Pass 1 (extraction) started — takes 3-5 minutes', 'success');
+            startPipelinePolling();
+        },
+        'action-rerun-ai-pass-2': async () => {
+            const run = await api.runPipeline(_state.propertyId, 'rerun_ai_pass_2');
+            _state.latestRun = run;
+            _state.pipelineRuns = [run, ..._state.pipelineRuns];
+            showToast('AI recommendation started — takes ~1 minute', 'success');
+            startPipelinePolling();
         },
     };
 

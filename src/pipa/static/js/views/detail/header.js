@@ -77,13 +77,20 @@ export function renderHeader(state) {
     const metaHtml = metaParts.map(m => `<span class="capitalize">${escapeHtml(m)}</span>`).join('<span class="text-gray-300">|</span>');
     const refreshHtml = lastRefresh ? `<span>Last run: ${formatDate(lastRefresh)}</span>` : '';
 
-    // Action buttons (compact)
+    // Action buttons (compact). All scrape/analyze buttons are disabled
+    // when a pipeline is currently running OR queued — preventing the
+    // "second click queues a run that never executes" footgun.
     const anyLoading = actionLoading !== null;
+    const pipelineBusy = latestRun && (latestRun.status === 'running' || latestRun.status === 'queued');
     const btn = (id, label, tooltip) => {
         const loading = actionLoading === id;
-        const disabled = anyLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200';
+        const blocked = anyLoading || pipelineBusy;
+        const tip = pipelineBusy
+            ? `${tooltip}\n\n[Disabled — pipeline ${latestRun.status}. Wait for it to finish.]`
+            : tooltip;
+        const disabled = blocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200';
         const spinner = loading ? '<span class="animate-spin inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full mr-1"></span>' : '';
-        return `<button id="${id}" title="${escapeHtml(tooltip)}" class="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-md ${disabled} transition-colors" ${anyLoading ? 'disabled' : ''}>${spinner}${escapeHtml(label)}</button>`;
+        return `<button id="${id}" title="${escapeHtml(tip)}" class="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-md ${disabled} transition-colors" ${blocked ? 'disabled' : ''}>${spinner}${escapeHtml(label)}</button>`;
     };
 
     // Stage selector
@@ -124,7 +131,8 @@ export function renderHeader(state) {
       ${btn('action-refresh-county', 'County', 'Re-scrape county records — assessments, permits, deeds, components')}
       ${btn('action-refresh-schools', 'Schools', 'Re-scrape LCPS school boundary assignments')}
       ${btn('action-deep-comp', 'Deep Comp', 'Find neighborhood sales → scrape each from County + Zillow → appraisal + AI value opinion (~10 min)')}
-      ${btn('action-rerun-ai', 'Rerun AI', 'Re-run AI Pass 1 (extraction) + Pass 2 (narrative) on existing data')}
+      ${btn('action-rerun-ai-pass-1', 'Run pre-AI', 'AI Pass 1 only — extract components, red flags, seller motivation, validate listing vs county. Slow (~3-5 min).')}
+      ${btn('action-rerun-ai-pass-2', 'Run AI recommendation', 'AI Pass 2 + decision packet — buyer-facing recommendation, narrative, pursue/maybe/pass. Requires Pass 1 results to already exist.')}
       <select id="stage-select" class="text-xs border border-gray-300 rounded px-2 py-1.5">
         <option value="" disabled ${!watchEntry ? 'selected' : ''}>${watchEntry ? 'Stage...' : 'Watchlist'}</option>
         ${stageOptions}
@@ -144,7 +152,7 @@ export function bindHeader(container, state, handlers) {
     const actionIds = [
         'action-refresh-all', 'action-run-pipeline',
         'action-refresh-listing', 'action-refresh-county', 'action-refresh-schools',
-        'action-deep-comp', 'action-rerun-ai',
+        'action-deep-comp', 'action-rerun-ai-pass-1', 'action-rerun-ai-pass-2',
     ];
     for (const id of actionIds) {
         const btn = container.querySelector(`#${id}`);
