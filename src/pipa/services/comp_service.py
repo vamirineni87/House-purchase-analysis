@@ -1177,7 +1177,49 @@ class CompService:
         now = datetime.now(timezone.utc)
 
         try:
+            # Fresh enriched comps from a previous deep_comp run are
+            # stored as EvidenceItems with field_name 'comp:{address}'.
+            # If one exists and is fresh, reuse the entire EnrichedComp
+            # so we skip BOTH the county scrape AND the Zillow scrape —
+            # on reruns we go from ~10 minutes to a few seconds.
+            from datetime import timedelta
+            comp_cache_ttl = timedelta(hours=168)
+            cutoff = now - comp_cache_ttl
+
+            async def _load_cached_comp(address: str) -> EnrichedComp | None:
+                """Return a fresh cached EnrichedComp for this address, or None."""
+                result = await db.execute(
+                    select(EvidenceItem).where(
+                        EvidenceItem.property_id == property_id,
+                        EvidenceItem.field_name == f"comp:{address}",
+                    ).order_by(EvidenceItem.observed_at.desc()).limit(1)
+                )
+                item = result.scalar_one_or_none()
+                if item is None:
+                    return None
+                observed_at = item.observed_at
+                if observed_at is not None and observed_at.tzinfo is None:
+                    # SQLite strips tzinfo; treat as UTC
+                    observed_at = observed_at.replace(tzinfo=timezone.utc)
+                if observed_at is None or observed_at < cutoff:
+                    return None
+                try:
+                    data = json.loads(item.field_value)
+                    return EnrichedComp(**data)
+                except Exception:
+                    logger.debug("Failed to rehydrate cached comp %s", address, exc_info=True)
+                    return None
+
             for candidate in candidates:
+                cached = await _load_cached_comp(candidate.address)
+                if cached is not None:
+                    logger.info(
+                        "Comp cache HIT for %s — skipping county + Zillow scrape",
+                        candidate.address,
+                    )
+                    enriched_comps.append(cached)
+                    continue
+
                 enriched = await CompService.enrich_comp_from_county(
                     db, candidate.address,
                     subject_property_id=property_id,
