@@ -94,6 +94,55 @@ def _normalize_address(addr: str) -> str:
     return normed.strip()
 
 
+def _zillow_address_matches(scraped: dict, requested_address: str) -> bool:
+    """True if the Zillow scrape result is for the address we asked for.
+
+    Compares the scraped result's street_address (or nested JSON-LD
+    address.street) against the requested address. Used to detect when
+    Zillow's /homes/{slug}_rb/ search URL redirected us to a DIFFERENT
+    property than the one we wanted — common for sold comps that are
+    no longer listed, where Zillow falls back to showing the nearest
+    currently-active listing (which is typically the subject property
+    in the same neighborhood, leaking subject data into every comp row).
+
+    Match key = uppercase house number + the next 1-2 street name words,
+    ignoring the street type suffix ("DR" vs "Drive"), commas, casing
+    and whitespace. Generous on purpose — we just need to catch the
+    "completely different address" case, not perfect matching.
+    """
+    if not requested_address or not scraped:
+        return False
+
+    scraped_street = scraped.get("street_address") or ""
+    if not scraped_street:
+        addr_obj = scraped.get("address")
+        if isinstance(addr_obj, dict):
+            scraped_street = addr_obj.get("street", "") or ""
+    if not scraped_street:
+        return False
+
+    # Strip street type suffixes (DR/DRIVE/ST/STREET/CT/COURT/...) before
+    # comparing so abbreviation differences don't trigger false negatives.
+    _STREET_TYPES = {
+        "dr", "drive", "st", "street", "ct", "court", "ln", "lane",
+        "rd", "road", "ave", "avenue", "pl", "place", "ter", "terrace",
+        "blvd", "boulevard", "way", "cir", "circle", "pkwy", "parkway",
+        "trl", "trail", "hwy", "highway", "sq", "square",
+    }
+
+    def _key(addr: str) -> str:
+        # Lowercase, strip city/state/zip, drop punctuation
+        s = addr.lower().split(",")[0]
+        s = re.sub(r"[^a-z0-9\s]", " ", s)
+        tokens = [t for t in s.split() if t]
+        # Drop trailing street-type token(s)
+        while tokens and tokens[-1] in _STREET_TYPES:
+            tokens.pop()
+        return " ".join(tokens)
+
+    return _key(scraped_street) == _key(requested_address)
+
+
 class CompService:
     """2-stage comp system: quick comp (auto) + deep comp (on-demand).
 
@@ -1117,21 +1166,38 @@ class CompService:
                     )
                     continue
 
-                # Try Zillow scrape for extra details (HOA, description, price history)
+                # Try Zillow scrape for extra details (HOA, description, price history).
+                #
+                # IMPORTANT: scrape_by_address builds a /homes/{slug}_rb/ search
+                # URL, NOT a /homedetails/.../{zpid}_zpid/ property URL. For sold
+                # comps that are no longer listed, Zillow's search redirects to
+                # the nearest ACTIVE listing — which is often the SUBJECT
+                # property in the same neighborhood. We have to validate that
+                # the scraped result's street address actually matches the
+                # comp we asked for, otherwise we'd persist the subject's
+                # list price/DOM/HOA on every comp row.
                 zillow_data: dict = {}
                 comp_street = enriched.get("address") or ""
                 if comp_street and not comp_street.isdigit():
                     try:
-                        zillow_data = await zillow_scraper.scrape_by_address(
+                        scraped = await zillow_scraper.scrape_by_address(
                             comp_street, city="", state="VA"
                         )
-                        if zillow_data.get("_error"):
+                        if scraped.get("_error"):
                             logger.debug("Zillow scrape failed for comp %s: %s",
-                                         comp_street, zillow_data.get("_error"))
-                            zillow_data = {}
-                        else:
+                                         comp_street, scraped.get("_error"))
+                        elif _zillow_address_matches(scraped, comp_street):
+                            zillow_data = scraped
                             logger.info("Zillow enrichment for comp %s: %d fields",
                                         comp_street, len(zillow_data))
+                        else:
+                            scraped_addr = scraped.get("street_address") or scraped.get("address") or "?"
+                            logger.warning(
+                                "Zillow scrape for comp %s returned a different "
+                                "property (%s) — discarding to avoid leaking "
+                                "subject data into the comp row",
+                                comp_street, scraped_addr,
+                            )
                     except Exception:
                         logger.debug("Zillow enrichment failed for comp %s", comp_street, exc_info=True)
 

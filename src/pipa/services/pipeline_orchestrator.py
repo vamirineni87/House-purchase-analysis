@@ -925,7 +925,11 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         except Exception:
             logger.debug("Could not load flood data for AI Pass 2")
 
-        # Use a shorter timeout to avoid blocking the pipeline
+        # Bumped from 60s to 180s — generate_property_summary feeds the
+        # full canonical + county + comps + financial + condition +
+        # schools + flood + warnings dataset to Claude. Pass 1 takes
+        # 5+ minutes against the same CLI; 60s for the bigger Pass 2
+        # prompt was guaranteed to time out when the CLI was contended.
         summary = await asyncio.wait_for(
             generate_property_summary(
                 property_data=ctx.canonical,
@@ -938,12 +942,12 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
                 flood_data=flood_data,
                 warnings=ctx.warnings,
             ),
-            timeout=60,  # 60 second max — more data to process
+            timeout=180,
         )
-        ctx.math_results["ai_interpretation"] = summary
-        await _persist_analysis(db, ctx.property_id, "ai_interpretation", summary)
 
-        # Store raw prompts + responses
+        # Always persist the call log (prompts + responses) for audit,
+        # even if the summary itself is empty or sparse — that way we
+        # can see what was sent to Claude when debugging.
         from pipa.services.ai_extraction import get_call_log
         call_log = get_call_log()
         if call_log:
@@ -958,10 +962,29 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
             db.add(sr)
             await db.flush()
 
-        return {"has_summary": bool(summary)}
+        if not summary:
+            # Claude CLI returned empty / non-JSON / parse failure.
+            # Don't write a junk AnalysisRun row, but flag the task so
+            # the orchestrator can mark it as failed instead of "succeeded".
+            logger.warning("AI Pass 2: Claude returned empty summary")
+            raise RuntimeError("AI Pass 2 produced no summary (Claude returned empty)")
+
+        ctx.math_results["ai_interpretation"] = summary
+        await _persist_analysis(db, ctx.property_id, "ai_interpretation", summary)
+        logger.info("AI Pass 2: persisted summary with keys=%s", list(summary.keys())[:10])
+        return {"has_summary": True, "keys": list(summary.keys())[:10]}
+
     except asyncio.TimeoutError:
-        logger.warning("AI Pass 2: Claude CLI timed out after 45s, skipping")
-        return {"skipped": True, "reason": "claude CLI timed out — may be competing with active session"}
+        # Raise so the orchestrator marks this task as "failed", not
+        # "succeeded". The previous code returned {"skipped": True}
+        # which the orchestrator silently treated as success — leaving
+        # the user with a green checkmark and zero output.
+        logger.warning("AI Pass 2: Claude CLI timed out after 180s")
+        raise RuntimeError(
+            "AI Pass 2 timed out after 180s — Claude CLI may be contended "
+            "by an active interactive session. Retry via the 'Run AI "
+            "recommendation' button when the CLI is free."
+        )
 
 
 async def _task_decision_packet(ctx: _ExecutionContext, db: AsyncSession) -> dict:
