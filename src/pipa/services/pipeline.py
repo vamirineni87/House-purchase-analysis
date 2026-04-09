@@ -259,41 +259,60 @@ def _resolve_canonical(
             set_canonical(canonical_key, val, "listing", rank)
 
     # --- AI-extracted components (rank 30) ---
-    # Normalize AI component names to standard keys used by condition scoring
-    _COMPONENT_ALIASES = {
-        "roof": "roof",
-        "roof_asphalt_shingle": "roof",
-        "roof_shingle": "roof",
-        "hvac": "hvac",
-        "hvac_system": "hvac",
-        "hvac_system_(x2)": "hvac",
-        "hvac_(x2)": "hvac",
-        "hvac_heat_pump": "hvac",
-        "central_air": "hvac",
-        "heating": "hvac",
-        "cooling": "hvac",
-        "air_conditioning": "hvac",
-        "furnace": "hvac",
-        "water_heater": "water_heater",
-        "water_heater_tank": "water_heater",
-        "hot_water_heater": "water_heater",
-        "electrical_panel": "electrical_panel",
-        "electrical": "electrical_panel",
-        "panel": "electrical_panel",
-        "windows": "windows",
-        "window": "windows",
-        "appliances": "appliances",
-        "kitchen_appliances": "appliances",
-        "fence": "fence",
-        "fencing": "fence",
-        "siding": "siding",
-        "exterior": "siding",
-        "driveway": "driveway",
-        "garage_door": "garage_door",
-    }
+    # Normalize AI component names to canonical keys used by condition
+    # scoring. Claude paraphrases wildly — we've seen variants like
+    # "HVAC system (x2)", "HVAC system (both units)", "HVAC systems",
+    # "heat pump x2", "central air conditioning", etc. Exact-key
+    # matching is whack-a-mole. Instead we do substring matching:
+    # check the raw name for ANY of the component's keywords and map
+    # to the canonical short key. First match wins, so list more
+    # specific categories before more generic ones (water_heater
+    # before heater, etc.).
+    _COMPONENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+        # (canonical_key, substring patterns to look for in lowered raw name)
+        ("water_heater", ("water_heater", "water heater", "hot_water")),
+        ("hvac",         ("hvac", "heat_pump", "heatpump", "heat pump",
+                          "furnace", "central_air", "central air",
+                          "air_conditioning", "air conditioning", "ac_unit",
+                          "heating", "cooling")),
+        ("roof",         ("roof",)),
+        ("electrical_panel", ("electrical_panel", "electrical panel",
+                              "breaker_box", "service_panel", "panel",
+                              "electrical")),
+        ("windows",      ("window",)),           # matches windows too
+        ("appliances",   ("appliance",)),        # matches appliances too
+        ("fence",        ("fence", "fencing")),
+        ("siding",       ("siding", "exterior")),
+        ("driveway",     ("driveway",)),
+        ("garage_door",  ("garage_door", "garage door")),
+        ("deck",         ("deck", "decking")),
+        ("patio",        ("patio",)),
+        ("kitchen",      ("kitchen",)),           # cabinets, countertops
+        ("basement",     ("basement",)),
+        ("sprinkler",    ("sprinkler", "irrigation")),
+    ]
+
+    def _canonical_component_key(raw: str) -> str:
+        """Map a free-text AI component name to a canonical short key.
+
+        'HVAC system (both units)' → 'hvac'
+        'roof asphalt shingle'     → 'roof'
+        'Quartz kitchen counters'  → 'kitchen'
+        'Gazebo'                   → 'gazebo' (passthrough, no match)
+        """
+        low = raw.lower().replace("_", " ").strip()
+        for canonical_key, patterns in _COMPONENT_KEYWORDS:
+            for pat in patterns:
+                pat_norm = pat.replace("_", " ")
+                if pat_norm in low:
+                    return canonical_key
+        # No match — passthrough with spaces→underscores so we still
+        # get a valid key, just not one the condition engine scores.
+        return raw.lower().replace(" ", "_")
+
     for comp in ai_extracted.get("components", []):
-        raw_name = comp.get("component", "").lower().replace(" ", "_")
-        component_name = _COMPONENT_ALIASES.get(raw_name, raw_name)
+        raw_name = comp.get("component", "") or ""
+        component_name = _canonical_component_key(raw_name)
         year = comp.get("year")
         confidence = comp.get("confidence", "low")
 
