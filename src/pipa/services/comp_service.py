@@ -1029,6 +1029,22 @@ class CompService:
         logger.debug("[enrich] comp_address=%s normed=%s force_refresh=%s ttl=%dh subject_pid=%s",
                      comp_address, normed, force_refresh, ttl_hours, subject_property_id)
 
+        def _as_utc(dt):
+            """Coerce a datetime to UTC-aware.
+
+            SQLite stores datetimes as naive strings — even when the
+            column is declared ``DateTime(timezone=True)``, values come
+            back without a tzinfo. Comparing them against a
+            ``datetime.now(timezone.utc)`` raises TypeError. This
+            helper treats a naive datetime as already-in-UTC and
+            attaches the tzinfo.
+            """
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
         # --- Check cache: do we already have county data for this comp? ---
         if not force_refresh:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
@@ -1044,17 +1060,20 @@ class CompService:
             for record in all_cached:
                 payload = record.raw_payload or {}
                 lookup_key = payload.get("_comp_lookup_key", "")
+                fetched_at = _as_utc(record.fetched_at)
                 logger.debug("[enrich]   record id=%s lookup_key=%r fetched=%s",
                              record.id[:12] if record.id else "?", lookup_key,
-                             record.fetched_at.isoformat() if record.fetched_at else "None")
+                             fetched_at.isoformat() if fetched_at else "None")
 
                 if lookup_key and (lookup_key == normed or lookup_key == comp_address):
-                    if record.fetched_at and record.fetched_at >= cutoff:
-                        logger.info("Cache hit for comp %s (fetched %s)", comp_address, record.fetched_at.isoformat())
+                    if fetched_at and fetched_at >= cutoff:
+                        logger.info("Cache hit for comp %s (fetched %s)", comp_address, fetched_at.isoformat())
                         return CompService._parse_all_county_tabs(payload, comp_address)
                     else:
                         logger.info("Stale cache for comp %s (fetched %s, ttl %dh)",
-                                    comp_address, record.fetched_at.isoformat(), ttl_hours)
+                                    comp_address,
+                                    fetched_at.isoformat() if fetched_at else "None",
+                                    ttl_hours)
 
             # Also check subject property's county records (might already be scraped)
             cached_county = await db.execute(
@@ -1069,9 +1088,10 @@ class CompService:
                     or payload.get("Profile", {}).get("_key_values", {}).get("Primary Address", "")
                 )
                 if summary_addr and (normed in summary_addr or summary_addr in normed):
-                    if record.fetched_at and record.fetched_at >= cutoff:
+                    fetched_at = _as_utc(record.fetched_at)
+                    if fetched_at and fetched_at >= cutoff:
                         logger.info("Found comp %s in existing county record (fetched %s)",
-                                    comp_address, record.fetched_at.isoformat())
+                                    comp_address, fetched_at.isoformat())
                         return CompService._parse_all_county_tabs(payload, comp_address)
 
             logger.debug("[enrich] No cache match for %s — will scrape", comp_address)
