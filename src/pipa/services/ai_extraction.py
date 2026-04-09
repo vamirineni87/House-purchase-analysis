@@ -207,6 +207,14 @@ def _parse_json_from_response(text: str) -> Any:
 # ======================================================================
 
 
+# Max listing text length sent to Claude. Set high enough to fit
+# realistic Zillow descriptions without truncation — most are 1-3k
+# chars but luxury / historical listings can run 5-10k. 20k gives
+# us plenty of headroom while staying well under Claude's context
+# limit. If we ever see descriptions bigger than this we can bump it.
+_MAX_LISTING_TEXT_CHARS = 20_000
+
+
 async def extract_components_from_text(text: str) -> list[dict]:
     """Extract home component replacements/upgrades from listing text.
 
@@ -225,7 +233,7 @@ async def extract_components_from_text(text: str) -> list[dict]:
         "confidence (string: high if year is explicitly stated, medium if "
         "implied like 'recently', low if vague). "
         "No explanation, just the JSON array.\n\n"
-        f"Listing text:\n{text[:3000]}"
+        f"Listing text:\n{text[:_MAX_LISTING_TEXT_CHARS]}"
     )
 
     response = await _ask_claude(prompt, call_label="extract_components")
@@ -249,7 +257,7 @@ async def extract_red_flags_from_text(text: str) -> list[dict]:
         "Return ONLY a JSON array with objects containing: "
         "flag (string), severity (critical/warning/info), excerpt (the relevant text). "
         "If no red flags found, return an empty array []. No explanation.\n\n"
-        f"Listing text:\n{text[:3000]}"
+        f"Listing text:\n{text[:_MAX_LISTING_TEXT_CHARS]}"
     )
 
     response = await _ask_claude(prompt, call_label="extract_red_flags")
@@ -275,7 +283,7 @@ async def extract_seller_motivation(text: str) -> dict:
         "signals (list of strings describing each signal found), "
         "negotiation_leverage (string: strong/moderate/weak/unknown). "
         "No explanation.\n\n"
-        f"Listing text:\n{text[:3000]}"
+        f"Listing text:\n{text[:_MAX_LISTING_TEXT_CHARS]}"
     )
 
     response = await _ask_claude(prompt, call_label="extract_seller_motivation")

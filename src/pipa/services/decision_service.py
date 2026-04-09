@@ -312,9 +312,14 @@ class DecisionService:
         recs = await DecisionService.get_recommendations(db, property_id)
         latest_rec = recs[0] if recs else None
 
-        # Fetch latest analysis runs by type
+        # Fetch latest analysis runs by type.
+        # ai_interpretation = AI Pass 2 output (pursue/maybe/pass + pros/cons)
+        # ai_extraction    = AI Pass 1 output (components + red flags)
         analyses: dict[str, dict] = {}
-        for analysis_type in ("financial", "tax", "investment", "condition", "offer", "stress"):
+        for analysis_type in (
+            "financial", "tax", "investment", "condition", "offer", "stress",
+            "ai_interpretation", "ai_extraction",
+        ):
             run_result = await db.execute(
                 select(AnalysisRun)
                 .where(
@@ -336,9 +341,39 @@ class DecisionService:
         offer = analyses.get("offer", {})
         stress = analyses.get("stress", {})
         tax = analyses.get("tax", {})
+        ai_interp = analyses.get("ai_interpretation", {}) or {}
+        ai_extract = analyses.get("ai_extraction", {}) or {}
 
         # --- Section 1: QUICK TAKE ---
-        if latest_rec:
+        # Priority order (most authoritative first):
+        #   1. AI Pass 2 (ai_interpretation) — quick_take + pros/cons/red_flags
+        #      straight from Claude's synthesis of ALL available data.
+        #      This is what the pipeline produces for every property on
+        #      ingest and is the source of truth when available.
+        #   2. RecommendationSnapshot — only populated when DecisionService
+        #      .create_recommendation is called manually.
+        #   3. DecisionCase.decision_status — set manually via the
+        #      /properties/{id}/decision endpoint.
+        #   4. Hardcoded "maybe" + explanation.
+        if ai_interp.get("quick_take") or ai_interp.get("top_3_pros") or ai_interp.get("top_3_cons"):
+            recommendation = (ai_interp.get("quick_take") or "maybe").lower()
+            # Assemble bullets from cons + red flags (cons = what buyer
+            # should be cautious about), then fall back to pros if empty.
+            bullets: list[str] = []
+            for c in (ai_interp.get("top_3_cons") or [])[:3]:
+                if isinstance(c, str) and c.strip():
+                    bullets.append(c.strip())
+            if len(bullets) < 3:
+                for rf in (ai_interp.get("red_flags") or []):
+                    if isinstance(rf, str) and rf.strip() and rf not in bullets:
+                        bullets.append(rf.strip())
+                        if len(bullets) >= 3:
+                            break
+            if not bullets and ai_interp.get("one_line_summary"):
+                bullets = [ai_interp["one_line_summary"]]
+            if not bullets:
+                bullets = ["See AI Analysis tab for details"]
+        elif latest_rec:
             recommendation = latest_rec.pursue_recommendation
             bullets = (latest_rec.main_red_flags or [])[:3]
             if len(bullets) < 3 and latest_rec.unresolved_unknowns:
@@ -346,9 +381,18 @@ class DecisionService:
         elif case:
             recommendation = case.decision_status
             bullets = [case.status_summary or "No analysis run yet"]
+        elif ai_extract.get("red_flags"):
+            # Pass 1 ran but Pass 2 didn't — surface what we have.
+            recommendation = "maybe"
+            rf = ai_extract.get("red_flags") or []
+            bullets = [
+                (r.get("description") or r.get("issue") or str(r))[:150]
+                if isinstance(r, dict) else str(r)[:150]
+                for r in rf[:3]
+            ]
         else:
             recommendation = "maybe"
-            bullets = ["No decision case created yet"]
+            bullets = ["Run the pipeline to generate an AI recommendation"]
 
         quick_take = {
             "recommendation": recommendation,
