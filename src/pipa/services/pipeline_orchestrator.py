@@ -925,11 +925,14 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         except Exception:
             logger.debug("Could not load flood data for AI Pass 2")
 
-        # Bumped from 60s to 180s — generate_property_summary feeds the
-        # full canonical + county + comps + financial + condition +
-        # schools + flood + warnings dataset to Claude. Pass 1 takes
-        # 5+ minutes against the same CLI; 60s for the bigger Pass 2
-        # prompt was guaranteed to time out when the CLI was contended.
+        # generate_property_summary feeds the full canonical + county +
+        # comps + financial + condition + schools + flood + warnings
+        # dataset to Claude. Pass 1 takes 5+ minutes against the same
+        # CLI when contended. The inner _ask_claude now has a 300s
+        # per-call timeout; this outer wait_for covers the whole call
+        # including rate-limit wait + prompt build + subprocess
+        # orchestration. 600s = 10 minutes should cover any realistic
+        # wall-clock we'd want to block on.
         summary = await asyncio.wait_for(
             generate_property_summary(
                 property_data=ctx.canonical,
@@ -942,7 +945,7 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
                 flood_data=flood_data,
                 warnings=ctx.warnings,
             ),
-            timeout=180,
+            timeout=600,
         )
 
         # Always persist the call log (prompts + responses) for audit,

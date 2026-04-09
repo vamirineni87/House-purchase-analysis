@@ -38,7 +38,11 @@ if not _CLAUDE_BIN:
 
 _last_call_time = 0.0
 _RATE_LIMIT_SECONDS = 5  # Min seconds between Claude calls
-_DEFAULT_TIMEOUT = 60
+# 300s default — Pass 1 component extraction and Pass 2 synthesis both
+# routinely take 2-4 minutes per call when the Claude CLI is contended
+# by an active interactive session on the same machine. 60s was
+# guaranteed to time out.
+_DEFAULT_TIMEOUT = 300
 _DEFAULT_MODEL = "claude-sonnet-4-6"  # Fast model for extraction tasks
 
 # In-memory log of recent AI calls (prompt + response + timing)
@@ -57,7 +61,7 @@ async def _ask_claude(
     prompt: str,
     timeout: int = _DEFAULT_TIMEOUT,
     model: str = _DEFAULT_MODEL,
-    max_retries: int = 2,
+    max_retries: int = 1,
     call_label: str = "",
 ) -> str | None:
     """Call Claude via CLI subprocess (async, non-blocking).
@@ -331,7 +335,7 @@ async def validate_listing_against_county(
         f"COUNTY RECORDS:\n{json.dumps(county_data, default=str)[:6000]}"
     )
 
-    response = await _ask_claude(prompt, timeout=90, call_label="validate_listing_vs_county")
+    response = await _ask_claude(prompt, timeout=300, call_label="validate_listing_vs_county")
     result = _parse_json_from_response(response)
     return result if isinstance(result, dict) else {}
 
@@ -456,7 +460,7 @@ async def generate_property_summary(
         f"{context}"
     )
 
-    response = await _ask_claude(prompt, timeout=90, call_label="generate_property_summary")
+    response = await _ask_claude(prompt, timeout=300, call_label="generate_property_summary")
     result = _parse_json_from_response(response)
     return result if isinstance(result, dict) else {}
 
@@ -727,6 +731,6 @@ async def interpret_comps(
         "Respond ONLY with the JSON, no other text."
     )
 
-    response = await _ask_claude(prompt, timeout=90, call_label="interpret_comps")
+    response = await _ask_claude(prompt, timeout=300, call_label="interpret_comps")
     result = _parse_json_from_response(response)
     return result if isinstance(result, dict) else {}
