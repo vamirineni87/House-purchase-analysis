@@ -42,6 +42,18 @@ DEFAULT_LIFESPANS: dict[str, int] = {
     "plumbing_drain": 50,
     "foundation": 75,
     "appliances": 12,
+    # Outdoor / non-structural — frequently mentioned in listings
+    "fence": 15,
+    "patio_concrete": 40,
+    "patio_stamped_concrete": 30,
+    "patio_paver": 30,
+    "gazebo": 20,
+    "sprinkler_system": 20,
+    "pool_liner": 10,
+    "pool_equipment": 15,
+    "basement_finish": 20,
+    "window_treatments": 10,
+    "sump_pump": 10,
 }
 
 # ------------------------------------------------------------------
@@ -78,6 +90,54 @@ DEFAULT_REPLACEMENT_COSTS: dict[str, float] = {
     "plumbing_drain": 15_000.0,
     "foundation": 25_000.0,
     "appliances": 8_000.0,
+    # Outdoor / non-structural
+    "fence": 6_000.0,
+    "patio_concrete": 5_000.0,
+    "patio_stamped_concrete": 8_000.0,
+    "patio_paver": 10_000.0,
+    "gazebo": 4_000.0,
+    "sprinkler_system": 4_000.0,
+    "pool_liner": 5_000.0,
+    "pool_equipment": 4_000.0,
+    "basement_finish": 25_000.0,
+    "window_treatments": 3_000.0,
+    "sump_pump": 1_000.0,
+}
+
+
+# Short human-readable labels for the UI, keyed by component type.
+# Falls back to title-cased slug when not in this map.
+COMPONENT_DISPLAY_NAMES: dict[str, str] = {
+    "roof_asphalt_shingle": "Roof (asphalt shingle)",
+    "roof_metal": "Roof (metal)",
+    "roof_tile": "Roof (tile)",
+    "hvac_furnace": "Furnace",
+    "hvac_ac": "A/C",
+    "hvac_heat_pump": "HVAC heat pump",
+    "water_heater_tank": "Water heater (tank)",
+    "water_heater_tankless": "Water heater (tankless)",
+    "windows": "Windows",
+    "electrical_panel": "Electrical panel",
+    "appliances": "Appliances",
+    "siding_vinyl": "Siding (vinyl)",
+    "siding_wood": "Siding (wood)",
+    "siding_fiber_cement": "Siding (fiber cement)",
+    "deck_wood": "Deck (wood)",
+    "deck_composite": "Deck (composite)",
+    "driveway_asphalt": "Driveway (asphalt)",
+    "driveway_concrete": "Driveway (concrete)",
+    "garage_door": "Garage door",
+    "kitchen_remodel": "Kitchen",
+    "bathroom_remodel": "Bathroom",
+    "fence": "Fence",
+    "patio_concrete": "Patio (concrete)",
+    "patio_stamped_concrete": "Patio (stamped concrete)",
+    "patio_paver": "Patio (pavers)",
+    "gazebo": "Gazebo",
+    "sprinkler_system": "Sprinkler system",
+    "basement_finish": "Basement finishing",
+    "window_treatments": "Window treatments",
+    "sump_pump": "Sump pump",
 }
 
 # ------------------------------------------------------------------

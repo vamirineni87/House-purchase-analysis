@@ -94,71 +94,82 @@ function renderScoreBar(data) {
     </div>`;
 }
 
-function renderComponentCard(comp) {
-    const type = comp.component_type || comp.type || 'unknown';
-    const displayName = type.replace(/_/g, ' ');
-    const year = comp.estimated_install_year || comp.install_year;
-    const currentYear = new Date().getFullYear();
-    const age = year ? currentYear - year : null;
+function _statusForComp(comp) {
     const remaining = comp.remaining_life;
-    const replacementCost = comp.replacement_cost;
-
-    const rlColor = remainingLifeColor(remaining);
-    const borderColor = remainingLifeBorder(remaining);
-
-    const rows = [];
-
-    if (year) {
-        rows.push(`
-            <div class="flex justify-between">
-                <span class="text-gray-500">Installed</span>
-                <span class="font-medium text-gray-700">${year}</span>
-            </div>`);
+    const age = comp.age ?? (comp.estimated_install_year
+        ? new Date().getFullYear() - comp.estimated_install_year
+        : null);
+    if (remaining != null) {
+        if (remaining <= 2) return { dot: 'bg-red-500',   label: 'Replace soon', tone: 'red' };
+        if (remaining <= 5) return { dot: 'bg-amber-500', label: 'Monitor',      tone: 'amber' };
+        return { dot: 'bg-green-500', label: 'Good', tone: 'green' };
     }
     if (age != null) {
-        rows.push(`
-            <div class="flex justify-between">
-                <span class="text-gray-500">Age</span>
-                <span class="font-medium text-gray-700">${age} yr</span>
-            </div>`);
+        if (age > 20) return { dot: 'bg-red-500',   label: 'Replace soon', tone: 'red' };
+        if (age > 12) return { dot: 'bg-amber-500', label: 'Monitor',      tone: 'amber' };
     }
-    if (remaining != null) {
-        rows.push(`
-            <div class="flex justify-between">
-                <span class="text-gray-500">Remaining</span>
-                <span class="font-medium ${rlColor}">${remaining} yr</span>
-            </div>`);
-    }
-    if (replacementCost != null) {
-        rows.push(`
-            <div class="flex justify-between">
-                <span class="text-gray-500">Replace cost</span>
-                <span class="font-medium text-gray-700">${formatCurrency(replacementCost)}</span>
-            </div>`);
-    }
+    return { dot: 'bg-green-500', label: 'Good', tone: 'green' };
+}
 
-    // Status indicator
-    let statusDot = 'bg-green-500';
-    let statusLabel = 'Good';
-    if (remaining != null) {
-        if (remaining <= 2) { statusDot = 'bg-red-500'; statusLabel = 'Replace soon'; }
-        else if (remaining <= 5) { statusDot = 'bg-amber-500'; statusLabel = 'Monitor'; }
-    } else if (age != null) {
-        if (age > 20) { statusDot = 'bg-red-500'; statusLabel = 'Replace soon'; }
-        else if (age > 12) { statusDot = 'bg-amber-500'; statusLabel = 'Monitor'; }
-    }
+/** Compact single-row component renderer (table row). */
+function renderComponentRow(comp) {
+    const displayName = comp.display_name
+        || (comp.component_type || comp.type || 'unknown').replace(/_/g, ' ');
+    const year = comp.estimated_install_year || comp.install_year;
+    const age = comp.age ?? (year ? new Date().getFullYear() - year : null);
+    const lifespan = comp.lifespan;
+    const remaining = comp.remaining_life;
+    const cost = comp.replacement_cost;
+    const isDefaulted = comp.is_defaulted || comp.source === 'default_year_built';
+
+    const status = _statusForComp(comp);
+    const rlColor = remainingLifeColor(remaining);
+
+    // Inline life progress bar: width = % of lifespan remaining
+    const lifePct = (lifespan && remaining != null)
+        ? Math.max(0, Math.min(100, (remaining / lifespan) * 100))
+        : null;
+    const barColor = status.tone === 'red'
+        ? 'bg-red-500'
+        : status.tone === 'amber'
+            ? 'bg-amber-500'
+            : 'bg-green-500';
+
+    const yearCell = year != null ? String(year) : '<span class="text-gray-300">?</span>';
+    const yearNote = isDefaulted
+        ? '<span class="text-[9px] text-gray-400 ml-1" title="Defaulted to year built — no specific install year extracted">(est)</span>'
+        : '';
+    const ageCell = age != null ? `${age}y` : '&mdash;';
+    const lifeCell = lifespan != null ? `${lifespan}y` : '&mdash;';
+    const remainingCell = remaining != null
+        ? `<span class="${rlColor} font-semibold">${remaining}y</span>`
+        : '<span class="text-gray-300">&mdash;</span>';
+    const costCell = cost != null && cost > 0
+        ? formatCurrency(cost)
+        : '<span class="text-gray-300">&mdash;</span>';
+
+    const barHtml = lifePct != null
+        ? `<div class="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
+             <div class="h-full ${barColor}" style="width:${lifePct}%"></div>
+           </div>`
+        : '<div class="w-16"></div>';
 
     return `
-    <div class="p-2.5 bg-white border ${borderColor} rounded">
-        <div class="flex items-center justify-between mb-1.5">
-            <span class="text-sm font-medium text-gray-900 capitalize">${escapeHtml(displayName)}</span>
-            <span class="flex items-center gap-1 text-xs text-gray-500">
-                <span class="w-1.5 h-1.5 rounded-full ${statusDot}"></span>
-                ${statusLabel}
-            </span>
-        </div>
-        <div class="space-y-1 text-xs">${rows.join('')}</div>
-    </div>`;
+    <tr class="hover:bg-gray-50 transition-colors">
+        <td class="px-2 py-1 text-xs">
+            <div class="flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full ${status.dot} shrink-0"></span>
+                <span class="font-medium text-gray-900 capitalize">${escapeHtml(displayName)}</span>
+            </div>
+        </td>
+        <td class="px-2 py-1 text-xs text-gray-700 text-right font-mono">${yearCell}${yearNote}</td>
+        <td class="px-2 py-1 text-xs text-gray-600 text-right font-mono">${ageCell}</td>
+        <td class="px-2 py-1 text-xs text-gray-500 text-right font-mono">${lifeCell}</td>
+        <td class="px-2 py-1 text-xs text-right font-mono">${remainingCell}</td>
+        <td class="px-2 py-1">${barHtml}</td>
+        <td class="px-2 py-1 text-xs text-gray-700 text-right font-mono">${costCell}</td>
+        <td class="px-2 py-1 text-[10px] text-gray-500">${status.label}</td>
+    </tr>`;
 }
 
 function renderCapexForecast(data) {
@@ -197,6 +208,58 @@ function renderCapexForecast(data) {
     </div>`;
 }
 
+function renderSummaryBar(data) {
+    const summary = data.summary || {};
+    const total = summary.total_components ?? (data.components || []).length;
+    const urgent = summary.urgent_count ?? 0;
+    const monitor = summary.monitor_count ?? 0;
+    const defaulted = summary.defaulted_count ?? 0;
+    const total10yr = summary.total_capex_10yr ?? null;
+
+    const pills = [];
+    if (total != null) pills.push(`<span class="text-gray-600">${total} tracked</span>`);
+    if (urgent > 0)    pills.push(`<span class="text-red-600 font-medium">${urgent} urgent</span>`);
+    if (monitor > 0)   pills.push(`<span class="text-amber-600 font-medium">${monitor} monitor</span>`);
+    if (defaulted > 0) pills.push(`<span class="text-gray-400">${defaulted} est. from year built</span>`);
+    if (total10yr != null && total10yr > 0) {
+        pills.push(`<span class="text-gray-700">10yr capex: <span class="font-semibold">${formatCurrency(total10yr)}</span></span>`);
+    }
+    if (pills.length === 0) return '';
+
+    return `
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+        ${pills.join('<span class="text-gray-300">·</span>')}
+    </div>`;
+}
+
+function renderComponentsTable(components) {
+    if (!components || components.length === 0) return '';
+    const rows = components.map(c => renderComponentRow(c)).join('');
+    return `
+    <div>
+        <h4 class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+            Components
+        </h4>
+        <div class="bg-white border border-gray-200 rounded overflow-hidden">
+            <table class="w-full text-xs">
+                <thead class="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
+                    <tr>
+                        <th class="px-2 py-1 text-left">Component</th>
+                        <th class="px-2 py-1 text-right">Year</th>
+                        <th class="px-2 py-1 text-right">Age</th>
+                        <th class="px-2 py-1 text-right">Life</th>
+                        <th class="px-2 py-1 text-right">Left</th>
+                        <th class="px-2 py-1"></th>
+                        <th class="px-2 py-1 text-right">Replace</th>
+                        <th class="px-2 py-1 text-left">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">${rows}</tbody>
+            </table>
+        </div>
+    </div>`;
+}
+
 // ── Render ──────────────────────────────────────────────────────────
 
 export function render(state) {
@@ -211,19 +274,11 @@ export function render(state) {
 
     const components = data.components || [];
 
-    const componentsHtml = components.length > 0
-        ? `<div>
-               <h4 class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Components</h4>
-               <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                   ${components.map(c => renderComponentCard(c)).join('')}
-               </div>
-           </div>`
-        : '';
-
     return `
-    <div class="space-y-4">
+    <div class="space-y-3">
         ${renderScoreBar(data)}
-        ${componentsHtml}
+        ${renderSummaryBar(data)}
+        ${renderComponentsTable(components)}
         ${renderCapexForecast(data)}
     </div>`;
 }

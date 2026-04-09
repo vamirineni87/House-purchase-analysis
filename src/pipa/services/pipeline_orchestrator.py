@@ -803,34 +803,122 @@ async def _task_tax(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 
 
 async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """Condition scoring and capex forecast."""
-    from pipa.analysis.condition import score_property_condition, calculate_capex_forecast
+    """Condition scoring and capex forecast.
+
+    Reads canonical ``component_{name}_year`` fields set by the resolver
+    and produces enriched component dicts with lifespan / remaining_life
+    / replacement_cost / display_name / source, so the frontend can
+    render a full condition tab without re-computing anything.
+    """
+    from pipa.analysis.condition import (
+        score_property_condition,
+        calculate_capex_forecast,
+        estimate_remaining_life,
+        DEFAULT_LIFESPANS,
+        DEFAULT_REPLACEMENT_COSTS,
+        COMPONENT_DISPLAY_NAMES,
+    )
     from datetime import date
 
     current_year = date.today().year
-    components = []
+
+    # Map canonical keys (produced by pipeline._resolve_canonical) to
+    # the specific lifespan/cost entries in condition.py. Each canonical
+    # key picks a "default variant" — asphalt shingle roof, heat pump,
+    # tank water heater, etc. — since those are the most common in VA
+    # new-build neighborhoods. Users who want a different variant can
+    # manually override later.
     type_map = {
-        "roof": "roof_asphalt_shingle",
-        "hvac": "hvac_heat_pump",
-        "water_heater": "water_heater_tank",
+        "roof":            "roof_asphalt_shingle",
+        "hvac":            "hvac_heat_pump",
+        "water_heater":    "water_heater_tank",
         "electrical_panel": "electrical_panel",
-        "windows": "windows",
-        "appliances": "appliances",
+        "windows":         "windows",
+        "appliances":      "appliances",
+        "fence":           "fence",
+        "siding":          "siding_vinyl",
+        "deck":            "deck_composite",
+        "driveway":        "driveway_asphalt",
+        "garage_door":     "garage_door",
+        "kitchen":         "kitchen_remodel",
+        "bathroom":        "bathroom_remodel",
+        "patio":           "patio_stamped_concrete",
+        "gazebo":          "gazebo",
+        "sprinkler":       "sprinkler_system",
+        "basement":        "basement_finish",
     }
-    for comp_type, mapped in type_map.items():
-        year = _to_int(ctx.canonical.get(f"component_{comp_type}_year"))
-        if year:
-            components.append({"component_type": mapped, "estimated_install_year": year})
+
+    # Source tracking: check which components came from AI extraction
+    # (high confidence) vs defaulted to year_built.
+    sources = ctx.canonical if hasattr(ctx, "canonical") else {}
+    year_built = _to_int(sources.get("year_built"))
+
+    components: list[dict] = []
+    for canonical_key, mapped_type in type_map.items():
+        year = _to_int(ctx.canonical.get(f"component_{canonical_key}_year"))
+        if not year:
+            continue
+
+        # Determine source: defaulted to year_built, or real signal
+        is_defaulted = (year_built is not None and year == year_built)
+        source = "default_year_built" if is_defaulted else "ai_extracted"
+
+        lifespan = DEFAULT_LIFESPANS.get(mapped_type)
+        if lifespan is None:
+            # Canonical key not in condition engine — skip gracefully
+            logger.debug("Condition: no lifespan for mapped type %r (canonical %r)",
+                         mapped_type, canonical_key)
+            continue
+
+        age = current_year - year
+        remaining = max(0, lifespan - age)
+        cost = DEFAULT_REPLACEMENT_COSTS.get(mapped_type, 0.0)
+        display = COMPONENT_DISPLAY_NAMES.get(
+            mapped_type,
+            mapped_type.replace("_", " ").title(),
+        )
+
+        components.append({
+            "component_type": mapped_type,
+            "canonical_key": canonical_key,
+            "display_name": display,
+            "estimated_install_year": year,
+            "age": age,
+            "lifespan": lifespan,
+            "remaining_life": remaining,
+            "replacement_cost": cost,
+            "source": source,
+            "is_defaulted": is_defaulted,
+        })
 
     if not components:
         logger.info("Condition: no components found. canonical keys with 'component': %s",
                      [k for k in ctx.canonical if 'component' in k])
         return {"skipped": True, "reason": "no component data"}
 
+    # Sort by remaining life ascending (most urgent first) — makes the
+    # UI naturally show "replace soon" items at the top.
+    components.sort(key=lambda c: c["remaining_life"])
+
     score = score_property_condition(components, current_year=current_year)
     capex = calculate_capex_forecast(components, current_year=current_year)
+
+    # Total near-term capex across all horizons
+    total_capex_10yr = capex.get(10, 0.0)
+    urgent_count = sum(1 for c in components if c["remaining_life"] <= 2)
+    monitor_count = sum(1 for c in components if 2 < c["remaining_life"] <= 5)
+
     condition_result = {
-        "score": score, "capex_forecast": capex, "components": components,
+        "score": score,
+        "capex_forecast": capex,
+        "components": components,
+        "summary": {
+            "total_components": len(components),
+            "urgent_count": urgent_count,      # replace within 2 years
+            "monitor_count": monitor_count,    # 3-5 year horizon
+            "total_capex_10yr": total_capex_10yr,
+            "defaulted_count": sum(1 for c in components if c["is_defaulted"]),
+        },
     }
     ctx.math_results["condition"] = condition_result
 
