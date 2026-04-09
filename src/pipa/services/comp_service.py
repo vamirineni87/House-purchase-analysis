@@ -525,19 +525,24 @@ class CompService:
             if market_indicators:
                 ai_market_ctx["market_indicators"] = market_indicators
 
-            # Load mortgage rate history (last 6 months = ~26 weekly observations)
+            # Load mortgage rate history (last 6 months = ~26 weekly observations).
+            # load_config() returns an AppConfig pydantic model, not a dict;
+            # the previous cfg.get("fred_api_key") call silently raised
+            # AttributeError and the FRED key was never used.
             rate_history = None
             try:
                 from pipa.core.config import load_config
                 cfg = load_config()
-                fred_key = cfg.get("fred_api_key") or cfg.get("FRED_API_KEY")
+                fred_key = cfg.api_keys.fred_api_key
                 if fred_key:
                     from pipa.clients.fred import FREDClient
                     fred = FREDClient(api_key=fred_key)
                     rate_history = await fred.get_rate_history(term_years=30, limit=26)
-                    logger.debug("[enrich] Loaded %d rate observations", len(rate_history or []))
+                    logger.debug("[enrich] Loaded %d FRED rate observations", len(rate_history or []))
+                else:
+                    logger.debug("FRED API key not configured — skipping rate history")
             except Exception:
-                logger.debug("Could not load FRED rate history for AI comp")
+                logger.debug("Could not load FRED rate history for AI comp", exc_info=True)
 
             ai_interpretation = await interpret_comps(
                 subject=ai_subject,
