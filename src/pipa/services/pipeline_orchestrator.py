@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 FULL_PIPELINE_TASKS = [
     "zillow_scrape",
     "county_scrape",
+    "permits",
     "school_lookup",
     "ai_pass_1",
     "resolver",
@@ -47,7 +48,7 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
         "zillow_scrape", "ai_pass_1", "resolver", "financial", "warning_engine",
     ],
     "refresh_zillow": ["zillow_scrape", "ai_pass_1", "resolver"],
-    "refresh_county": ["county_scrape", "resolver"],
+    "refresh_county": ["county_scrape", "permits", "resolver"],
     "run_deep_comp": ["comp_deep"],
     # AI Pass 1 = extraction (components, red flags, motivation, validation
     # against county). Stand-alone version for the "Run pre-AI" button.
@@ -59,7 +60,7 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
     # object is empty". The scrape tasks are cheap when cached data
     # exists (they just load from ListingPageSnapshot / SourceRecord).
     "rerun_ai_pass_1": [
-        "zillow_scrape", "county_scrape", "school_lookup",
+        "zillow_scrape", "county_scrape", "permits", "school_lookup",
         "ai_pass_1",
     ],
     # AI Pass 2 = synthesis (buyer-facing recommendation, narrative).
@@ -68,13 +69,13 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
     # resolver + financial + condition so ctx.canonical and
     # ctx.math_results are populated — Pass 2 reads from both.
     "rerun_ai_pass_2": [
-        "zillow_scrape", "county_scrape", "school_lookup",
+        "zillow_scrape", "county_scrape", "permits", "school_lookup",
         "resolver", "financial", "tax", "condition",
         "ai_pass_2", "decision_packet",
     ],
     # Both passes back-to-back (legacy convenience).
     "rerun_ai": [
-        "zillow_scrape", "county_scrape", "school_lookup",
+        "zillow_scrape", "county_scrape", "permits", "school_lookup",
         "ai_pass_1", "resolver", "financial", "tax", "condition",
         "ai_pass_2", "decision_packet",
     ],
@@ -87,7 +88,7 @@ VALID_TASK_NAMES = {
     "zillow_scrape", "county_scrape", "ai_pass_1", "resolver",
     "financial", "tax", "condition", "offer", "stress",
     "warning_engine", "ai_pass_2", "decision_packet",
-    "school_lookup", "comp_quick", "comp_deep",
+    "school_lookup", "permits", "comp_quick", "comp_deep",
 }
 
 
@@ -1234,6 +1235,132 @@ async def _task_school_lookup(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         return {"skipped": True, "reason": str(e)[:200]}
 
 
+async def _task_permits(ctx: _ExecutionContext, db: AsyncSession) -> dict:
+    """Loudoun County permit scrape via Tyler EnerGov self-service API.
+
+    Loudoun-only for now — Fairfax permits live in the PLUS portal which
+    needs a separate scraper. Returns ``{"skipped": True, ...}`` for
+    non-Loudoun properties so this task can sit in the default pipeline
+    without erroring.
+
+    Steps:
+      1. Look up the property's current situs address.
+      2. Bail out if the property isn't in Loudoun.
+      3. Call ``fetch_permits(street)`` — single REST call, no browser.
+      4. Insert new ``PermitRecord`` rows, deduped on permit_number per
+         property+source. Existing permits are left untouched.
+      5. Call ``PermitService.infer_components`` so the new permits flow
+         into ``ComponentSystem`` and the condition tab can pick them up.
+    """
+    from pipa.models.property import AddressHistory
+    from pipa.models.permit import PermitRecord
+
+    # 1. Resolve the current situs address
+    addr_result = await db.execute(
+        select(AddressHistory).where(
+            AddressHistory.property_id == ctx.property_id,
+            AddressHistory.address_type == "situs",
+            AddressHistory.is_current.is_(True),
+        ).limit(1)
+    )
+    addr = addr_result.scalar_one_or_none()
+    if addr is None:
+        return {"skipped": True, "reason": "no current situs address"}
+
+    # 2. Loudoun-only gate
+    county = (addr.county or "").lower()
+    if "loudoun" not in county:
+        return {
+            "skipped": True,
+            "reason": f"not Loudoun (county={addr.county!r})",
+        }
+
+    # Tyler matches against the address index — pass just the street
+    # portion (no city/state/zip) for highest match probability.
+    street = (addr.normalized_address or "").strip()
+    if "," in street:
+        street = street.split(",")[0].strip()
+    if not street:
+        return {"skipped": True, "reason": "empty street address"}
+
+    # 3. Fetch from Tyler EnerGov
+    from pipa.clients.scrapers.loudoun_permits import fetch_permits
+
+    try:
+        permits_data = await fetch_permits(street)
+    except Exception as e:
+        logger.exception("Loudoun permit fetch failed for %r", street)
+        return {"skipped": True, "reason": f"fetch error: {str(e)[:120]}"}
+
+    if not permits_data:
+        return {
+            "fetched": 0,
+            "inserted": 0,
+            "components_inferred": 0,
+        }
+
+    # 4. Upsert into PermitRecord, deduped on permit_number
+    existing_result = await db.execute(
+        select(PermitRecord.permit_number).where(
+            PermitRecord.property_id == ctx.property_id,
+            PermitRecord.source == "loudoun_tyler",
+        )
+    )
+    existing_numbers = {row[0] for row in existing_result.all() if row[0]}
+
+    def _parse_dt(s: Any) -> datetime | None:
+        if not s:
+            return None
+        try:
+            # Tyler returns naive ISO strings like "2016-07-25T00:00:00".
+            # Treat them as UTC for SQLAlchemy DateTime(timezone=True).
+            text = str(s).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
+    inserted = 0
+    for p in permits_data:
+        pnum = p.get("permit_number")
+        if pnum and pnum in existing_numbers:
+            continue
+        # Workclass is more specific than CaseType (e.g. "Furnace" vs
+        # "Residential"). Truncate to the column width.
+        type_label = (p.get("workclass") or p.get("type") or "Unknown")[:50]
+        record = PermitRecord(
+            property_id=ctx.property_id,
+            permit_number=pnum,
+            type=type_label,
+            description=p.get("description"),
+            issue_date=_parse_dt(p.get("issue_date")),
+            final_date=_parse_dt(p.get("final_date")),
+            status=p.get("status"),
+            source="loudoun_tyler",
+        )
+        db.add(record)
+        inserted += 1
+
+    if inserted > 0:
+        await db.flush()
+
+    # 5. Infer components from the (now updated) permit set
+    from pipa.services.permit_service import PermitService
+    components = await PermitService.infer_components(db, ctx.property_id)
+
+    logger.info(
+        "Permits task: fetched %d, inserted %d new, inferred %d components for %s",
+        len(permits_data), inserted, len(components), ctx.property_id,
+    )
+    return {
+        "fetched": len(permits_data),
+        "inserted": inserted,
+        "components_inferred": len(components),
+    }
+
+
 async def _task_comp_quick(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     """Quick comp search — placeholder for future implementation."""
     return {"skipped": True, "reason": "not yet implemented"}
@@ -1259,6 +1386,7 @@ _TASK_HANDLERS: dict[str, Any] = {
     "ai_pass_2": _task_ai_pass_2,
     "decision_packet": _task_decision_packet,
     "school_lookup": _task_school_lookup,
+    "permits": _task_permits,
     "comp_quick": _task_comp_quick,
     "comp_deep": _task_comp_deep,
 }

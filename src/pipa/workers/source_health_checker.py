@@ -49,8 +49,8 @@ SOURCE_PROBES: dict[str, dict] = {
         "type": "public_site_scrape",
         "expected_status": 200,
     },
-    "loudoun_landmarc": {
-        "url": "https://www.loudoun.gov/5823/LandMARC-Land-Management-Applications-Re",
+    "loudoun_tyler_permits": {
+        "url": "https://loudouncountyvaeg.tylerhost.net/prod/selfservice",
         "type": "public_site_scrape",
         "expected_status": 200,
     },

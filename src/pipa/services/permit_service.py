@@ -98,17 +98,30 @@ class PermitService:
                     cost=permit.estimated_cost,
                 )
 
-                # Record evidence linking this permit
-                evidence = ComponentEvidence(
-                    component_system_id=component.id,
-                    source="permit",
-                    source_date=permit.issue_date,
-                    extracted_value=(
-                        f"Permit {permit.permit_number}: {permit.description or permit.type}"
-                    ),
-                    confidence_score=0.8,
+                # Record evidence linking this permit. Skip if an
+                # identical row already exists — infer_components is
+                # called on every pipeline run and we don't want
+                # ComponentEvidence to grow unbounded.
+                extracted_value = (
+                    f"Permit {permit.permit_number}: "
+                    f"{permit.description or permit.type}"
                 )
-                db.add(evidence)
+                dup_q = await db.execute(
+                    select(ComponentEvidence).where(
+                        ComponentEvidence.component_system_id == component.id,
+                        ComponentEvidence.source == "permit",
+                        ComponentEvidence.extracted_value == extracted_value,
+                    ).limit(1)
+                )
+                if dup_q.scalar_one_or_none() is None:
+                    evidence = ComponentEvidence(
+                        component_system_id=component.id,
+                        source="permit",
+                        source_date=permit.issue_date,
+                        extracted_value=extracted_value,
+                        confidence_score=0.8,
+                    )
+                    db.add(evidence)
 
                 inferred.append({
                     "component_type": component_type,
