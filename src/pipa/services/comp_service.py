@@ -1077,11 +1077,28 @@ class CompService:
         property_id: str,
         candidates: list[CompCandidate],
     ) -> list[EnrichedComp]:
-        """County-enrich a list of candidates. Reused by deep_comp and build_verified_comps."""
+        """County-enrich a list of candidates. Reused by deep_comp and build_verified_comps.
+
+        Performance + correctness notes:
+        - Both scrapers (Loudoun + Zillow) are created ONCE outside the loop
+          and reused across all comps. Previously the Zillow scraper was
+          created and torn down inside the loop, launching a new Chromium
+          browser per comp (~3-5s wasted overhead × N comps).
+        - We commit the DB after EACH comp's evidence is flushed. The old
+          code held a single open transaction for the entire 25-comp scrape
+          loop (~10+ minutes). SQLite was write-locked the entire time,
+          which starved APScheduler ('database is locked') and any other
+          concurrent API request that needed to write.
+        """
         if not candidates:
             return []
 
+        from pipa.clients.scrapers.zillow import ZillowScraper
+
         scraper = LoudounParcelScraper(headless=True)
+        # Reused across the entire loop. headless=False so the Zillow CAPTCHA
+        # bypass + cookie loading still works.
+        zillow_scraper = ZillowScraper(headless=False)
         enriched_comps: list[EnrichedComp] = []
         now = datetime.now(timezone.utc)
 
@@ -1105,23 +1122,18 @@ class CompService:
                 comp_street = enriched.get("address") or ""
                 if comp_street and not comp_street.isdigit():
                     try:
-                        from pipa.clients.scrapers.zillow import ZillowScraper
-                        zillow_scraper = ZillowScraper(headless=False)
-                        try:
-                            zillow_data = await zillow_scraper.scrape_by_address(
-                                comp_street, city="", state="VA"
-                            )
-                            if zillow_data.get("_error"):
-                                logger.debug("Zillow scrape failed for comp %s: %s",
-                                             comp_street, zillow_data.get("_error"))
-                                zillow_data = {}
-                            else:
-                                logger.info("Zillow enrichment for comp %s: %d fields",
-                                            comp_street, len(zillow_data))
-                        finally:
-                            await zillow_scraper.close()
+                        zillow_data = await zillow_scraper.scrape_by_address(
+                            comp_street, city="", state="VA"
+                        )
+                        if zillow_data.get("_error"):
+                            logger.debug("Zillow scrape failed for comp %s: %s",
+                                         comp_street, zillow_data.get("_error"))
+                            zillow_data = {}
+                        else:
+                            logger.info("Zillow enrichment for comp %s: %d fields",
+                                        comp_street, len(zillow_data))
                     except Exception:
-                        logger.debug("Zillow enrichment failed for comp %s", comp_street)
+                        logger.debug("Zillow enrichment failed for comp %s", comp_street, exc_info=True)
 
                 # Detect sqft conflict
                 listing_sqft = candidate.sqft or _safe_int(zillow_data.get("sqft") or zillow_data.get("livingArea"))
@@ -1204,12 +1216,26 @@ class CompService:
                     confidence="confirmed",
                 )
                 db.add(evidence)
+                await db.flush()
 
-            await db.flush()
+                # Commit after each comp so the SQLite write lock is
+                # released between scrapes. Without this, the entire 25-
+                # comp loop holds the lock for 10+ minutes and starves
+                # APScheduler ('database is locked') and any other
+                # concurrent API request that needs to write.
+                await db.commit()
+
             return enriched_comps
 
         finally:
-            await scraper.close()
+            try:
+                await scraper.close()
+            except Exception:
+                logger.debug("Loudoun scraper close failed", exc_info=True)
+            try:
+                await zillow_scraper.close()
+            except Exception:
+                logger.debug("Zillow scraper close failed", exc_info=True)
 
     # ==================================================================
     # LEGACY: build_verified_comps and run_comp_analysis
