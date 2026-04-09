@@ -308,15 +308,40 @@ class CompService:
         active_candidates = [c for c in all_candidates if c.status == "active"]
         pending_candidates = [c for c in all_candidates if c.status in ("pending", "contingent")]
 
-        # Filter and rank sold candidates by similarity
+        # --- Pass 1: initial ranking on free signals (year, style,
+        # subdivision, builder_model) ---
+        # Loudoun Neighborhood Sales candidates have NO sqft/beds/baths,
+        # so the first ranking pass uses only the signals we can get
+        # from the data we already have.
         ranked_sold = CompService.filter_comps(sold_candidates, subject_data)
 
         logger.info(
-            "Deep comp candidates: %d sold (ranked), %d active, %d pending",
+            "Deep comp candidates: %d sold (ranked, pre-enrich), %d active, %d pending",
             len(ranked_sold), len(active_candidates), len(pending_candidates),
         )
 
-        # County-enrich only the top candidates
+        # --- Pass 2: cheap pre-enrichment for the top ~2x pool ---
+        # Before committing to the top-6, fetch sqft/beds/baths from the
+        # Loudoun "Residential" tab (~5-10s per comp, cached) for the
+        # top candidates. Then re-rank using real size data. This lets
+        # us hit the ±15% sqft hard filter and the sqft closeness
+        # scoring on the actual comps, not just by builder_model/year.
+        pre_enrich_count = min(max(max_comps * 2, 10), len(ranked_sold))
+        if pre_enrich_count > 0:
+            logger.info("Pre-enriching top %d candidates with sqft/beds/baths", pre_enrich_count)
+            pool = ranked_sold[:pre_enrich_count]
+            await CompService._pre_enrich_for_ranking(db, property_id, pool)
+            # Re-run filter+rank now that candidates have real sizes.
+            # This also applies the ±15% sqft hard filter for the first
+            # time (it was skipped in pass 1 because sqft was None).
+            ranked_sold = CompService.filter_comps(pool, subject_data)
+            logger.info(
+                "Deep comp candidates after pre-enrichment: %d sold survived ±15%% sqft + re-ranked",
+                len(ranked_sold),
+            )
+
+        # County-enrich only the top candidates (full 11-tab scrape +
+        # Zillow for each). This is the expensive pass.
         top_candidates = ranked_sold[:max_comps]
         enriched_comps = await CompService._enrich_candidates(
             db, property_id, top_candidates
@@ -805,7 +830,7 @@ class CompService:
         Filters (appraisal-grade tolerances):
         - same property type (if known)
         - sqft within +/-15% of subject
-        - year_built within +/-10 years
+        - year_built within +/-4 years (tight — buyers care about era)
         - beds within +/-1
         - baths within +/-1
         - sold within last 6 months (already done in find_comp_candidates)
@@ -835,9 +860,13 @@ class CompService:
                 if pct > 0.15:
                     continue
 
-            # Year built filter: within +/-10 years (skip if unknown)
+            # Year built filter: within +/-4 years (skip if unknown).
+            # 4 years is intentionally tighter than the classic
+            # appraisal ±10 — buyers in Northern VA care about the
+            # specific build era (HVAC standards, insulation code,
+            # floor plans, kitchen layouts all shift on ~5-year cycles).
             if subject_year and c.year_built:
-                if abs(c.year_built - subject_year) > 10:
+                if abs(c.year_built - subject_year) > 4:
                     continue
 
             # Beds filter: within +/-1 (skip if unknown)
@@ -850,9 +879,14 @@ class CompService:
                 if abs(c.baths - subject_baths) > 1.0:
                     continue
 
-            # --- Similarity scoring (0-100) ---
+            # --- Similarity scoring ---
+            # Now passes the entire subject_data dict so the scorer can
+            # use builder_model, subdivision, style — signals we get for
+            # free from the Loudoun Neighborhood Sales tab that were
+            # previously ignored.
             score = CompService._compute_similarity(
-                c, subject_sqft, subject_year, subject_beds, subject_baths
+                c, subject_sqft, subject_year, subject_beds, subject_baths,
+                subject_data=subject_data,
             )
             c.similarity_score = round(score, 1)
             scored.append(c)
@@ -868,54 +902,70 @@ class CompService:
         subject_year: int | None,
         subject_beds: int,
         subject_baths: float,
+        subject_data: dict | None = None,
     ) -> float:
-        """Compute a 0-100 similarity score for a comp vs subject.
+        """Compute a similarity score for a comp vs subject.
 
-        Weights:
-        - sqft closeness:  35 pts
-        - year built:      20 pts
-        - beds match:      15 pts
-        - baths match:     15 pts
-        - recency of sale: 15 pts
+        Base weights (out of 100):
+            sqft closeness:  30 pts
+            year built:      15 pts  (tightened to ±4y window)
+            beds match:      10 pts
+            baths match:     10 pts
+            recency of sale: 15 pts
+            style match:     10 pts  (NEW — exact COLONIAL/RANCH/etc.)
+            subdivision:     10 pts  (NEW — same HOA, same dev)
+            builder model:   30 pts  (NEW — same floor plan = near-identical)
+
+        The style/subdivision/builder_model signals come for free from
+        the Loudoun Neighborhood Sales tab — previously ignored. Builder
+        model alone is worth 30 points because matching models are
+        typically the SAME floor plan, same sqft, same year range —
+        essentially the same house just at a different address. A
+        real appraiser would weight this heavily.
+
+        Max score can exceed 100 if everything matches; that's fine
+        since we only use it for sorting.
         """
         score = 0.0
+        subject_data = subject_data or {}
 
-        # Sqft closeness (35 pts): 0% diff = 35, 15% diff = 0
+        # Sqft closeness (30 pts): 0% diff = 30, 15% diff = 0
         if subject_sqft and comp.sqft:
             pct_diff = abs(comp.sqft - subject_sqft) / subject_sqft
-            score += max(0, 35 * (1 - pct_diff / 0.15))
+            score += max(0, 30 * (1 - pct_diff / 0.15))
         elif not comp.sqft:
             # Unknown sqft — give partial credit
-            score += 10
+            score += 8
 
-        # Year built (20 pts): 0 year diff = 20, 10 year diff = 0
+        # Year built (15 pts): 0 year diff = 15, 4 year diff = 0.
+        # Matches the ±4 hard filter.
         if subject_year and comp.year_built:
             year_diff = abs(comp.year_built - subject_year)
-            score += max(0, 20 * (1 - year_diff / 10))
+            score += max(0, 15 * (1 - year_diff / 4))
         elif not comp.year_built:
-            score += 5
+            score += 4
 
-        # Beds match (15 pts): exact = 15, +-1 = 8
+        # Beds match (10 pts): exact = 10, +-1 = 5
         if subject_beds and comp.beds:
             bed_diff = abs(comp.beds - subject_beds)
             if bed_diff == 0:
-                score += 15
+                score += 10
             elif bed_diff == 1:
-                score += 8
+                score += 5
         elif not comp.beds:
-            score += 5
+            score += 3
 
-        # Baths match (15 pts): exact = 15, +-0.5 = 10, +-1 = 5
+        # Baths match (10 pts): exact = 10, +-0.5 = 7, +-1 = 3
         if subject_baths and comp.baths:
             bath_diff = abs(comp.baths - subject_baths)
             if bath_diff <= 0.1:
-                score += 15
-            elif bath_diff <= 0.5:
                 score += 10
+            elif bath_diff <= 0.5:
+                score += 7
             elif bath_diff <= 1.0:
-                score += 5
+                score += 3
         elif not comp.baths:
-            score += 5
+            score += 3
 
         # Recency (15 pts): today = 15, 6 months ago = 0
         if comp.date:
@@ -924,7 +974,42 @@ class CompService:
                 days_ago = (date.today() - sale_date).days
                 score += max(0, 15 * (1 - days_ago / 180))
         else:
-            score += 3  # unknown date, small credit
+            score += 3
+
+        # ---- New signals from Loudoun Neighborhood Sales data ----
+
+        def _norm(s):
+            return (s or "").strip().upper() or None
+
+        # Style match (10 pts): exact equality only (COLONIAL vs COLONIAL).
+        subject_style = _norm(subject_data.get("style") or subject_data.get("architectural_style"))
+        comp_style = _norm(comp.style)
+        if subject_style and comp_style and subject_style == comp_style:
+            score += 10
+
+        # Subdivision match (10 pts): same development usually means
+        # same HOA, same era, same builder pool, same amenities.
+        subject_sub = _norm(subject_data.get("subdivision"))
+        comp_sub = _norm(comp.subdivision)
+        if subject_sub and comp_sub and subject_sub == comp_sub:
+            score += 10
+
+        # Builder model match (30 pts): SAME model = same floor plan,
+        # same sqft, same year range. This is the single most valuable
+        # signal we have for Loudoun comps when sqft/beds/baths are
+        # missing — an identical model is essentially the same house.
+        # Requires same builder too, since model names can collide
+        # across builders.
+        subject_model = _norm(subject_data.get("model") or subject_data.get("builder_model"))
+        comp_model = _norm(comp.model)
+        subject_builder = _norm(subject_data.get("builder") or subject_data.get("builder_name"))
+        comp_builder = _norm(comp.builder)
+        if (
+            subject_model and comp_model
+            and subject_model == comp_model
+            and (not subject_builder or not comp_builder or subject_builder == comp_builder)
+        ):
+            score += 30
 
         return score
 
@@ -1156,6 +1241,165 @@ class CompService:
         finally:
             if owns_scraper:
                 await scraper.close()
+
+    @staticmethod
+    async def _pre_enrich_for_ranking(
+        db: AsyncSession,
+        property_id: str,
+        candidates: list[CompCandidate],
+    ) -> None:
+        """Cheap Loudoun scrape to populate sqft/beds/baths in-place.
+
+        For each candidate, try (cheapest to most expensive):
+        1. Already has sqft set by an earlier pass → skip
+        2. Cached full enrichment (county_comp_enrichment SourceRecord
+           or comp:{addr} EvidenceItem) within TTL → copy sqft/beds/baths
+        3. Fresh scrape of just the Loudoun "Residential" tab
+           (~5-10s per comp instead of 60s for all 11 tabs), keyed by
+           parcel_id when available (faster than address search).
+
+        Results are written back onto the CompCandidate objects in the
+        list so the subsequent filter_comps call can score on real size
+        data. No return value — mutates in place.
+
+        Does NOT fetch Zillow data — that's reserved for the top 6.
+        """
+        from datetime import timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=168)
+
+        def _as_utc(dt):
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
+        # --- Step 1: check caches (no network) ---
+        def _copy_county_fields(candidate: CompCandidate, payload: dict) -> bool:
+            """Copy sqft/beds/baths from a parsed county payload. Returns True if anything was set."""
+            parsed = CompService._parse_all_county_tabs(payload, candidate.address)
+            sqft = _safe_int(parsed.get("sqft_above_grade"))
+            full_baths = _safe_int(parsed.get("full_baths")) or 0
+            half_baths = _safe_int(parsed.get("half_baths")) or 0
+            got_anything = False
+            if sqft and not candidate.sqft:
+                candidate.sqft = sqft
+                got_anything = True
+            if (full_baths or half_baths) and not candidate.baths:
+                candidate.baths = full_baths + half_baths * 0.5
+                got_anything = True
+            # Loudoun Residential tab doesn't list beds directly;
+            # best effort — derive from "total_rooms" or leave None.
+            return got_anything
+
+        candidates_needing_scrape: list[CompCandidate] = []
+        for c in candidates:
+            if c.sqft:
+                continue  # already has data
+
+            # Try layer 1: comp:{addr} evidence with a full EnrichedComp
+            key = f"comp:{_normalize_address(c.address)}"
+            item = (await db.execute(
+                select(EvidenceItem).where(
+                    EvidenceItem.property_id == property_id,
+                    EvidenceItem.field_name == key,
+                ).order_by(EvidenceItem.observed_at.desc()).limit(1)
+            )).scalar_one_or_none()
+            if item is not None:
+                observed = _as_utc(item.observed_at)
+                if observed and observed >= cutoff:
+                    try:
+                        data = json.loads(item.field_value)
+                        if data.get("sqft_above_grade"):
+                            c.sqft = int(data["sqft_above_grade"])
+                        fb = data.get("full_baths") or 0
+                        hb = data.get("half_baths") or 0
+                        if fb or hb:
+                            c.baths = fb + hb * 0.5
+                        if c.sqft:
+                            logger.debug(
+                                "[pre-enrich] cached EnrichedComp for %s → sqft=%s baths=%s",
+                                c.address, c.sqft, c.baths,
+                            )
+                            continue
+                    except Exception:
+                        pass
+
+            # Try layer 2: county_comp_enrichment SourceRecord
+            normed = _normalize_address(c.address)
+            sr_rows = (await db.execute(
+                select(SourceRecord).where(
+                    SourceRecord.source_name == "county_comp_enrichment",
+                ).order_by(SourceRecord.fetched_at.desc()).limit(200)
+            )).scalars().all()
+            found_cached = False
+            for sr in sr_rows:
+                payload = sr.raw_payload or {}
+                if payload.get("_comp_lookup_key") != normed:
+                    continue
+                fetched = _as_utc(sr.fetched_at)
+                if fetched and fetched >= cutoff:
+                    if _copy_county_fields(c, payload):
+                        logger.debug(
+                            "[pre-enrich] cached county payload for %s → sqft=%s baths=%s",
+                            c.address, c.sqft, c.baths,
+                        )
+                        found_cached = True
+                break
+            if found_cached:
+                continue
+
+            candidates_needing_scrape.append(c)
+
+        # --- Step 2: fresh scrape of ONLY the Residential tab ---
+        if not candidates_needing_scrape:
+            logger.info("[pre-enrich] all candidates hit cache — no fresh scrapes needed")
+            return
+
+        logger.info(
+            "[pre-enrich] %d candidates need fresh Residential-tab scrape",
+            len(candidates_needing_scrape),
+        )
+        scraper = LoudounParcelScraper(headless=True)
+        # Only the Residential tab has the sqft/baths we need for ranking.
+        # Profile is included because the scraper uses it to confirm it
+        # landed on the right parcel detail page.
+        cheap_tabs = ["Profile", "Residential"]
+        try:
+            for c in candidates_needing_scrape:
+                try:
+                    # Prefer parcel_id lookup (faster, avoids address parsing).
+                    if c.parcel_id:
+                        raw = await scraper.scrape_by_parcel_id(
+                            c.parcel_id, tabs=cheap_tabs,
+                        )
+                    else:
+                        raw = await scraper.scrape_by_address_string(
+                            c.address, tabs=cheap_tabs,
+                        )
+                    if raw.get("_error"):
+                        logger.debug(
+                            "[pre-enrich] scrape failed for %s: %s",
+                            c.address, raw.get("_error"),
+                        )
+                        continue
+                    # Parse sqft/baths and set on the candidate
+                    _copy_county_fields(c, raw)
+                    logger.debug(
+                        "[pre-enrich] fresh scrape for %s → sqft=%s baths=%s",
+                        c.address, c.sqft, c.baths,
+                    )
+                except Exception:
+                    logger.debug(
+                        "[pre-enrich] unexpected error scraping %s",
+                        c.address, exc_info=True,
+                    )
+        finally:
+            try:
+                await scraper.close()
+            except Exception:
+                pass
 
     @staticmethod
     async def _enrich_candidates(
@@ -1847,9 +2091,12 @@ class CompService:
     ) -> dict:
         """Load subject property data from the DB.
 
-        Pulls from ListingEpisode (most recent active/pending) and
-        ListingPageSnapshot (most recent parsed_fields) to build a dict
-        with list_price, sqft, beds, baths, year_built.
+        Pulls from ListingEpisode (most recent active/pending),
+        ListingPageSnapshot.parsed_fields (Zillow scrape), and the
+        Loudoun parcel SourceRecord to build a dict with:
+          - list_price, sqft, beds, baths, year_built
+          - style, subdivision, model, builder (from Loudoun for
+            comp similarity scoring)
         """
         # Try ListingEpisode first (most reliable structured data)
         episode_result = await db.execute(
@@ -1897,6 +2144,38 @@ class CompService:
                     subject["baths"] = full + half * 0.5
             if not subject.get("year_built"):
                 subject["year_built"] = pf.get("year_built")
+            # Zillow normalized facts_and_features also has these
+            if not subject.get("architectural_style"):
+                subject["architectural_style"] = pf.get("architectural_style")
+            if not subject.get("subdivision"):
+                subject["subdivision"] = pf.get("subdivision")
+            if not subject.get("builder_model"):
+                subject["builder_model"] = pf.get("builder_model")
+            if not subject.get("builder_name"):
+                subject["builder_name"] = pf.get("builder_name")
+
+        # Also pull style/subdivision/model/builder from the Loudoun
+        # parcel record — this is where the comp similarity scorer
+        # will find matching comps by model/builder/subdivision.
+        # The Loudoun scraper stores these in the _summary block.
+        loudoun_sr = await db.execute(
+            select(SourceRecord).where(
+                SourceRecord.property_id == property_id,
+                SourceRecord.source_name.in_(["loudoun_county", "loudoun_parcel"]),
+            ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+        )
+        sr_row = loudoun_sr.scalar_one_or_none()
+        if sr_row and sr_row.raw_payload:
+            summary = sr_row.raw_payload.get("_summary", {}) or {}
+            # Prefer Loudoun values over Zillow for these since the
+            # Loudoun names are what the Neighborhood Sales tab also
+            # uses, so comp matching will work.
+            subject["style"] = summary.get("style") or subject.get("architectural_style")
+            subject["subdivision"] = summary.get("subdivision") or subject.get("subdivision")
+            subject["model"] = summary.get("model") or subject.get("builder_model")
+            # County doesn't expose builder in _summary; fall back to
+            # whatever the listing gave us.
+            subject["builder"] = subject.get("builder_name")
 
         return subject
 
