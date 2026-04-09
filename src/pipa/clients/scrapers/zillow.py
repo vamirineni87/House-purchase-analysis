@@ -769,10 +769,30 @@ class ZillowScraper(BaseScraper):
             # event loop while running. Per-layer timing logged so we can
             # see if a layer is starving the loop and causing the UI to
             # appear "stuck loading" during a background scrape.
+            #
+            # IMPORTANT: extract the zpid from the post-redirect page
+            # URL and pass it into _extract_from_graphql so we can pick
+            # the body that actually represents this property. Without
+            # this, the extractor picks the LARGEST body containing
+            # bedrooms+price — which on a logged-in session is usually
+            # the "recently viewed" / "similar homes" widget, NOT the
+            # property the page is showing. That bug caused every comp
+            # in deep_comp to inherit the subject property's data.
             import time as _t
+            target_zpid = None
+            try:
+                final_url = page.url
+                m = re.search(r"(\d+)_zpid", final_url)
+                if m:
+                    target_zpid = m.group(1)
+                    logger.debug("Target zpid extracted from final URL: %s", target_zpid)
+            except Exception:
+                pass
+
             t_layer = _t.monotonic()
-            logger.debug("Layer 1 (GraphQL): extracting from %d responses...", len(graphql_bodies))
-            graphql_data = self._extract_from_graphql(graphql_bodies)
+            logger.debug("Layer 1 (GraphQL): extracting from %d responses (target_zpid=%s)...",
+                        len(graphql_bodies), target_zpid)
+            graphql_data = self._extract_from_graphql(graphql_bodies, target_zpid=target_zpid)
             logger.info("Layer 1 (GraphQL) parse: %.0fms, %d fields",
                         (_t.monotonic() - t_layer) * 1000, len(graphql_data))
             if graphql_data:
@@ -1018,25 +1038,77 @@ class ZillowScraper(BaseScraper):
     # Layer 1: GraphQL extraction
     # ==================================================================
 
-    def _extract_from_graphql(self, bodies: list[str]) -> dict[str, Any]:
+    def _extract_from_graphql(
+        self,
+        bodies: list[str],
+        target_zpid: str | None = None,
+    ) -> dict[str, Any]:
         """Extract property data from intercepted GraphQL responses.
 
-        Finds the main property response (largest one with bedrooms+price)
-        and parses all structured fields from it.
-        """
-        # Find the main property response
-        main_body = None
-        search_body = None
+        Picks the GraphQL body that actually represents the property the
+        page is showing. Selection priority:
 
-        for body in bodies:
-            if '"bedrooms"' in body and '"price"' in body:
-                if not main_body or len(body) > len(main_body):
+        1. **target_zpid match (preferred)** — pick the body whose FIRST
+           ``"zpid"`` JSON value equals ``target_zpid``. This is the
+           response from the page's main property query.
+        2. **Largest body fallback** — when no zpid matches (e.g. the
+           caller didn't supply one), fall back to "largest body that
+           contains bedrooms+price". This is what the old code did and
+           it's wrong on a logged-in session: Zillow's "recently viewed"
+           and "similar homes" widgets ship a LARGER GraphQL response
+           than the page's main query, and that response starts with the
+           subject property data — leaking subject values into every
+           comp scrape.
+
+        ``target_zpid`` should be extracted from the post-redirect
+        page.url (``/homedetails/.../{zpid}_zpid/``) by the caller.
+        """
+        # Bodies that contain a property payload at all
+        property_bodies = [b for b in bodies if '"bedrooms"' in b and '"price"' in b]
+        if not property_bodies:
+            return {}
+
+        main_body = None
+
+        # Tier 1: pick by matching zpid (the body's FIRST zpid must
+        # equal the target — that's the body where the regex extractor
+        # will read the right property's fields, since regex always
+        # picks the first occurrence).
+        if target_zpid:
+            for body in property_bodies:
+                m = re.search(r'"zpid"\s*:\s*(\d+)', body)
+                if m and m.group(1) == target_zpid:
                     main_body = body
+                    logger.debug(
+                        "GraphQL body selected by zpid match (%s): %d chars",
+                        target_zpid, len(body),
+                    )
+                    break
+
+        # Tier 2: largest-body fallback. Only fires when target_zpid is
+        # missing OR no body had a matching first zpid.
+        if main_body is None:
+            main_body = max(property_bodies, key=len)
+            if target_zpid:
+                logger.warning(
+                    "GraphQL body: no body matched target zpid %s, "
+                    "falling back to largest (%d chars). Extracted data "
+                    "may be for a DIFFERENT property than requested.",
+                    target_zpid, len(main_body),
+                )
+            else:
+                logger.debug(
+                    "GraphQL body selected by size (no target_zpid): %d chars",
+                    len(main_body),
+                )
+
+        # Find a separate "search response" body for zestimate / rent_zestimate
+        # which often live in a different query than the main property data.
+        search_body = None
+        for body in bodies:
             if '"zestimate"' in body and '"rentZestimate"' in body:
                 search_body = body
-
-        if not main_body:
-            return {}
+                break
 
         result: dict[str, Any] = {}
 
