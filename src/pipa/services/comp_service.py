@@ -320,28 +320,51 @@ class CompService:
             len(ranked_sold), len(active_candidates), len(pending_candidates),
         )
 
-        # --- Pass 2: cheap pre-enrichment for the top ~2x pool ---
-        # Before committing to the top-6, fetch sqft/beds/baths from the
-        # Loudoun "Residential" tab (~5-10s per comp, cached) for the
-        # top candidates. Then re-rank using real size data. This lets
-        # us hit the ±15% sqft hard filter and the sqft closeness
-        # scoring on the actual comps, not just by builder_model/year.
-        pre_enrich_count = min(max(max_comps * 2, 10), len(ranked_sold))
-        if pre_enrich_count > 0:
-            logger.info("Pre-enriching top %d candidates with sqft/beds/baths", pre_enrich_count)
-            pool = ranked_sold[:pre_enrich_count]
-            await CompService._pre_enrich_for_ranking(db, property_id, pool)
-            # Re-run filter+rank now that candidates have real sizes.
-            # This also applies the ±15% sqft hard filter for the first
-            # time (it was skipped in pass 1 because sqft was None).
-            ranked_sold = CompService.filter_comps(pool, subject_data)
+        # --- Pass 2: full county enrichment for EVERY surviving candidate ---
+        # Correctness > latency. We fetch the complete Loudoun parcel
+        # data (all 11 tabs) for every candidate that passed the year/
+        # style/subdivision/model filters, not just the top ~12. This
+        # way the top-6 selection is based on REAL sqft/beds/baths/
+        # condition/grade, not guesses from free signals.
+        #
+        # enrich_comp_from_county caches on a 168h TTL, so the scrape
+        # cost is a one-time tax per comp per week. The subsequent
+        # _enrich_candidates call below will see cache hits for all
+        # county data and only need to run the Zillow per-comp scrape
+        # on the final top 6.
+        pre_enrich_rank: list[CompCandidate] = list(ranked_sold)
+        if ranked_sold:
             logger.info(
-                "Deep comp candidates after pre-enrichment: %d sold survived ±15%% sqft + re-ranked",
+                "Pre-enriching ALL %d candidates with full county data (correctness-first)",
                 len(ranked_sold),
             )
+            await CompService._pre_enrich_for_ranking(db, property_id, ranked_sold)
+            # Re-run filter+rank now that candidates have real sizes.
+            # The ±15% sqft hard filter fires for the first time, and
+            # the sqft closeness score can actually differentiate.
+            re_ranked = CompService.filter_comps(ranked_sold, subject_data)
+            if re_ranked:
+                ranked_sold = re_ranked
+                logger.info(
+                    "Deep comp candidates after full county pre-enrichment: "
+                    "%d survived ±15%% sqft + re-ranked", len(ranked_sold),
+                )
+            else:
+                # Strict filters dropped everything — fall back to the
+                # pre-enrichment ranking. The appraisal engine can
+                # handle size adjustments; better to show the closest
+                # available comps with a warning than to show nothing.
+                logger.warning(
+                    "Deep comp: strict ±15%% sqft + other filters dropped "
+                    "ALL %d pre-enriched candidates. Falling back to the "
+                    "free-signal ranking. Top comps may be size-mismatched.",
+                    len(pre_enrich_rank),
+                )
+                ranked_sold = pre_enrich_rank
 
-        # County-enrich only the top candidates (full 11-tab scrape +
-        # Zillow for each). This is the expensive pass.
+        # County-enrich only the top candidates. Thanks to the
+        # pre-enrichment cache, the county scrape is a cache hit for
+        # every one — only Zillow per-comp scraping runs fresh.
         top_candidates = ranked_sold[:max_comps]
         enriched_comps = await CompService._enrich_candidates(
             db, property_id, top_candidates
@@ -1248,151 +1271,73 @@ class CompService:
         property_id: str,
         candidates: list[CompCandidate],
     ) -> None:
-        """Cheap Loudoun scrape to populate sqft/beds/baths in-place.
+        """Full Loudoun enrichment for every candidate, before ranking.
 
-        For each candidate, try (cheapest to most expensive):
-        1. Already has sqft set by an earlier pass → skip
-        2. Cached full enrichment (county_comp_enrichment SourceRecord
-           or comp:{addr} EvidenceItem) within TTL → copy sqft/beds/baths
-        3. Fresh scrape of just the Loudoun "Residential" tab
-           (~5-10s per comp instead of 60s for all 11 tabs), keyed by
-           parcel_id when available (faster than address search).
+        Populates sqft / full_baths / half_baths / style / model /
+        year_built / condition / grade / basement / foundation / etc.
+        in-place on each CompCandidate so the subsequent filter_comps
+        call can score on REAL data, not guesses.
 
-        Results are written back onto the CompCandidate objects in the
-        list so the subsequent filter_comps call can score on real size
-        data. No return value — mutates in place.
+        Uses enrich_comp_from_county which does a full 11-tab scrape
+        AND caches the result as a county_comp_enrichment SourceRecord
+        (168h TTL). That means:
 
-        Does NOT fetch Zillow data — that's reserved for the top 6.
+          - First run (cold cache): ~60s per comp × N comps
+          - Subsequent runs: near-zero (all cache hits)
+          - The top-6 deep enrichment afterwards reuses the same
+            cached payload — so Zillow is the only fresh work.
+
+        Sequential on purpose: parallel scraping with a single
+        Playwright browser context tends to trip anti-bot defenses
+        and the Loudoun site is rate-limited anyway.
+
+        Mutates candidates in place. No return value.
         """
-        from datetime import timedelta
-
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=168)
-
-        def _as_utc(dt):
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt
-
-        # --- Step 1: check caches (no network) ---
-        def _copy_county_fields(candidate: CompCandidate, payload: dict) -> bool:
-            """Copy sqft/beds/baths from a parsed county payload. Returns True if anything was set."""
-            parsed = CompService._parse_all_county_tabs(payload, candidate.address)
-            sqft = _safe_int(parsed.get("sqft_above_grade"))
-            full_baths = _safe_int(parsed.get("full_baths")) or 0
-            half_baths = _safe_int(parsed.get("half_baths")) or 0
-            got_anything = False
-            if sqft and not candidate.sqft:
-                candidate.sqft = sqft
-                got_anything = True
-            if (full_baths or half_baths) and not candidate.baths:
-                candidate.baths = full_baths + half_baths * 0.5
-                got_anything = True
-            # Loudoun Residential tab doesn't list beds directly;
-            # best effort — derive from "total_rooms" or leave None.
-            return got_anything
-
-        candidates_needing_scrape: list[CompCandidate] = []
-        for c in candidates:
-            if c.sqft:
-                continue  # already has data
-
-            # Try layer 1: comp:{addr} evidence with a full EnrichedComp
-            key = f"comp:{_normalize_address(c.address)}"
-            item = (await db.execute(
-                select(EvidenceItem).where(
-                    EvidenceItem.property_id == property_id,
-                    EvidenceItem.field_name == key,
-                ).order_by(EvidenceItem.observed_at.desc()).limit(1)
-            )).scalar_one_or_none()
-            if item is not None:
-                observed = _as_utc(item.observed_at)
-                if observed and observed >= cutoff:
-                    try:
-                        data = json.loads(item.field_value)
-                        if data.get("sqft_above_grade"):
-                            c.sqft = int(data["sqft_above_grade"])
-                        fb = data.get("full_baths") or 0
-                        hb = data.get("half_baths") or 0
-                        if fb or hb:
-                            c.baths = fb + hb * 0.5
-                        if c.sqft:
-                            logger.debug(
-                                "[pre-enrich] cached EnrichedComp for %s → sqft=%s baths=%s",
-                                c.address, c.sqft, c.baths,
-                            )
-                            continue
-                    except Exception:
-                        pass
-
-            # Try layer 2: county_comp_enrichment SourceRecord
-            normed = _normalize_address(c.address)
-            sr_rows = (await db.execute(
-                select(SourceRecord).where(
-                    SourceRecord.source_name == "county_comp_enrichment",
-                ).order_by(SourceRecord.fetched_at.desc()).limit(200)
-            )).scalars().all()
-            found_cached = False
-            for sr in sr_rows:
-                payload = sr.raw_payload or {}
-                if payload.get("_comp_lookup_key") != normed:
-                    continue
-                fetched = _as_utc(sr.fetched_at)
-                if fetched and fetched >= cutoff:
-                    if _copy_county_fields(c, payload):
-                        logger.debug(
-                            "[pre-enrich] cached county payload for %s → sqft=%s baths=%s",
-                            c.address, c.sqft, c.baths,
-                        )
-                        found_cached = True
-                break
-            if found_cached:
-                continue
-
-            candidates_needing_scrape.append(c)
-
-        # --- Step 2: fresh scrape of ONLY the Residential tab ---
-        if not candidates_needing_scrape:
-            logger.info("[pre-enrich] all candidates hit cache — no fresh scrapes needed")
+        if not candidates:
             return
 
-        logger.info(
-            "[pre-enrich] %d candidates need fresh Residential-tab scrape",
-            len(candidates_needing_scrape),
-        )
+        # Share one scraper instance across all candidates so we pay
+        # the Chromium launch cost once instead of per-comp.
         scraper = LoudounParcelScraper(headless=True)
-        # Only the Residential tab has the sqft/baths we need for ranking.
-        # Profile is included because the scraper uses it to confirm it
-        # landed on the right parcel detail page.
-        cheap_tabs = ["Profile", "Residential"]
         try:
-            for c in candidates_needing_scrape:
+            for c in candidates:
                 try:
-                    # Prefer parcel_id lookup (faster, avoids address parsing).
-                    if c.parcel_id:
-                        raw = await scraper.scrape_by_parcel_id(
-                            c.parcel_id, tabs=cheap_tabs,
-                        )
-                    else:
-                        raw = await scraper.scrape_by_address_string(
-                            c.address, tabs=cheap_tabs,
-                        )
-                    if raw.get("_error"):
+                    enriched = await CompService.enrich_comp_from_county(
+                        db, c.address,
+                        subject_property_id=property_id,
+                        scraper=scraper,
+                    )
+                    if enriched.get("_error"):
                         logger.debug(
-                            "[pre-enrich] scrape failed for %s: %s",
-                            c.address, raw.get("_error"),
+                            "[pre-enrich] enrich failed for %s: %s",
+                            c.address, enriched.get("_error"),
                         )
                         continue
-                    # Parse sqft/baths and set on the candidate
-                    _copy_county_fields(c, raw)
+
+                    # Populate ranking fields on the candidate in place
+                    sqft = _safe_int(enriched.get("sqft_above_grade"))
+                    if sqft and not c.sqft:
+                        c.sqft = sqft
+                    full_baths = _safe_int(enriched.get("full_baths")) or 0
+                    half_baths = _safe_int(enriched.get("half_baths")) or 0
+                    if (full_baths or half_baths) and not c.baths:
+                        c.baths = full_baths + half_baths * 0.5
+                    # Year / style / model may already be set from the
+                    # Neighborhood Sales row, but fill gaps if not.
+                    if not c.year_built:
+                        c.year_built = _safe_int(enriched.get("year_built"))
+                    if not c.style:
+                        c.style = enriched.get("style")
+                    if not c.model:
+                        c.model = enriched.get("model")
+
                     logger.debug(
-                        "[pre-enrich] fresh scrape for %s → sqft=%s baths=%s",
-                        c.address, c.sqft, c.baths,
+                        "[pre-enrich] %s → sqft=%s baths=%s year=%s style=%r model=%r",
+                        c.address, c.sqft, c.baths, c.year_built, c.style, c.model,
                     )
                 except Exception:
                     logger.debug(
-                        "[pre-enrich] unexpected error scraping %s",
+                        "[pre-enrich] unexpected error for %s",
                         c.address, exc_info=True,
                     )
         finally:
