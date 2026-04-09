@@ -1054,33 +1054,45 @@ class CompService:
         if not force_refresh:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
 
-            # Search by comp_lookup_key (parcel ID or normalized address)
+            # Search by _comp_lookup_key in the JSON payload. Note:
+            # _comp_lookup_key is stored as a JSON field so we can't
+            # index/filter by it in the WHERE clause — we load the most
+            # recent N records and linear-scan in Python. Capped at 500
+            # to keep the scan bounded.
             cached_records = await db.execute(
                 select(SourceRecord).where(
                     SourceRecord.source_name == "county_comp_enrichment",
-                ).order_by(SourceRecord.fetched_at.desc())
+                ).order_by(SourceRecord.fetched_at.desc()).limit(500)
             )
             all_cached = cached_records.scalars().all()
-            logger.debug("[enrich] county_comp_enrichment records found: %d", len(all_cached))
+            logger.debug(
+                "[enrich] scanning %d county_comp_enrichment records for key=%r",
+                len(all_cached), normed,
+            )
             for record in all_cached:
                 payload = record.raw_payload or {}
                 lookup_key = payload.get("_comp_lookup_key", "")
                 fetched_at = _as_utc(record.fetched_at)
-                logger.debug("[enrich]   record id=%s lookup_key=%r fetched=%s",
-                             record.id[:12] if record.id else "?", lookup_key,
-                             fetched_at.isoformat() if fetched_at else "None")
 
-                if lookup_key and (lookup_key == normed or lookup_key == comp_address):
+                # Exact match only — substring matching on addresses
+                # is too dangerous ("22 LOIS LN" would match "22966
+                # LOIS LN" via substring). Both write and read now use
+                # _normalize_address() so the keys are canonical.
+                if lookup_key and lookup_key == normed:
                     if fetched_at and fetched_at >= cutoff:
-                        logger.info("Cache hit for comp %s (fetched %s)", comp_address, fetched_at.isoformat())
+                        logger.info("[enrich] cache HIT %s (fetched %s)",
+                                    comp_address, fetched_at.isoformat())
                         return CompService._parse_all_county_tabs(payload, comp_address)
                     else:
-                        logger.info("Stale cache for comp %s (fetched %s, ttl %dh)",
-                                    comp_address,
-                                    fetched_at.isoformat() if fetched_at else "None",
-                                    ttl_hours)
+                        logger.debug("[enrich] cache STALE %s (fetched %s, ttl %dh)",
+                                     comp_address,
+                                     fetched_at.isoformat() if fetched_at else "None",
+                                     ttl_hours)
 
-            # Also check subject property's county records (might already be scraped)
+            # Secondary lookup: the subject property's OWN county records
+            # sometimes match a comp (when a comp shares an address with
+            # something we already scraped). Exact match on the normalized
+            # address only — no substring containment.
             cached_county = await db.execute(
                 select(SourceRecord).where(
                     SourceRecord.source_name.in_(["loudoun_county", "loudoun_parcel"]),
@@ -1092,7 +1104,7 @@ class CompService:
                     payload.get("_summary", {}).get("address", "")
                     or payload.get("Profile", {}).get("_key_values", {}).get("Primary Address", "")
                 )
-                if summary_addr and (normed in summary_addr or summary_addr in normed):
+                if summary_addr and summary_addr == normed:
                     fetched_at = _as_utc(record.fetched_at)
                     if fetched_at and fetched_at >= cutoff:
                         logger.info("Found comp %s in existing county record (fetched %s)",
@@ -1178,37 +1190,69 @@ class CompService:
 
         try:
             # Fresh enriched comps from a previous deep_comp run are
-            # stored as EvidenceItems with field_name 'comp:{address}'.
-            # If one exists and is fresh, reuse the entire EnrichedComp
-            # so we skip BOTH the county scrape AND the Zillow scrape —
-            # on reruns we go from ~10 minutes to a few seconds.
+            # stored as EvidenceItems with field_name 'comp:{NORMALIZED ADDRESS}'.
+            # We ALWAYS normalize the address before using it as a cache key
+            # so that a comp coming through Loudoun ("42449 MEADOW SAGE DR",
+            # uppercase) and the same comp coming through Zillow nearby
+            # ("42449 Meadow Sage Dr", mixed case) hit the same cache row.
             from datetime import timedelta
             comp_cache_ttl = timedelta(hours=168)
             cutoff = now - comp_cache_ttl
 
+            def _comp_cache_key(address: str) -> str:
+                return f"comp:{_normalize_address(address)}"
+
             async def _load_cached_comp(address: str) -> EnrichedComp | None:
                 """Return a fresh cached EnrichedComp for this address, or None."""
+                key = _comp_cache_key(address)
                 result = await db.execute(
                     select(EvidenceItem).where(
                         EvidenceItem.property_id == property_id,
-                        EvidenceItem.field_name == f"comp:{address}",
+                        EvidenceItem.field_name == key,
                     ).order_by(EvidenceItem.observed_at.desc()).limit(1)
                 )
                 item = result.scalar_one_or_none()
                 if item is None:
+                    logger.debug("[comp cache] MISS key=%r (no row)", key)
                     return None
                 observed_at = item.observed_at
                 if observed_at is not None and observed_at.tzinfo is None:
                     # SQLite strips tzinfo; treat as UTC
                     observed_at = observed_at.replace(tzinfo=timezone.utc)
                 if observed_at is None or observed_at < cutoff:
+                    logger.debug(
+                        "[comp cache] MISS key=%r (stale: observed=%s < cutoff=%s)",
+                        key,
+                        observed_at.isoformat() if observed_at else "None",
+                        cutoff.isoformat(),
+                    )
                     return None
                 try:
                     data = json.loads(item.field_value)
-                    return EnrichedComp(**data)
+                    enriched = EnrichedComp(**data)
+                    logger.debug("[comp cache] HIT  key=%r observed=%s", key, observed_at.isoformat())
+                    return enriched
                 except Exception:
-                    logger.debug("Failed to rehydrate cached comp %s", address, exc_info=True)
+                    logger.debug("Failed to rehydrate cached comp %r", key, exc_info=True)
                     return None
+
+            async def _prune_old_comp_rows(address: str) -> int:
+                """Delete stale EvidenceItem rows for this comp key BEFORE insert.
+
+                Without this, every deep_comp rerun appends a new row
+                (we saw 10 rows for 5 unique comps in the DB). Returns
+                count deleted.
+                """
+                key = _comp_cache_key(address)
+                existing = (await db.execute(
+                    select(EvidenceItem).where(
+                        EvidenceItem.property_id == property_id,
+                        EvidenceItem.field_name == key,
+                    )
+                )).scalars().all()
+                for old in existing:
+                    await db.delete(old)
+                return len(existing)
 
             for candidate in candidates:
                 cached = await _load_cached_comp(candidate.address)
@@ -1340,9 +1384,20 @@ class CompService:
                 db.add(source_record)
                 await db.flush()
 
+                # Delete any stale rows for this comp BEFORE inserting
+                # the new one, so deep_comp reruns don't accumulate
+                # duplicate EvidenceItems. Use the SAME normalized key
+                # the cache-read side uses so they stay in sync.
+                pruned = await _prune_old_comp_rows(candidate.address)
+                if pruned:
+                    logger.debug(
+                        "[comp cache] pruned %d stale rows for %s before insert",
+                        pruned, candidate.address,
+                    )
+
                 evidence = EvidenceItem(
                     property_id=property_id,
-                    field_name=f"comp:{candidate.address}",
+                    field_name=_comp_cache_key(candidate.address),
                     field_value=json.dumps(comp.model_dump(), default=str),
                     source_record_id=source_record.id,
                     observed_at=now,
