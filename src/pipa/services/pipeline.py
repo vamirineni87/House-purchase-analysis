@@ -270,7 +270,11 @@ def _resolve_canonical(
     # before heater, etc.).
     _COMPONENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
         # (canonical_key, substring patterns to look for in lowered raw name)
-        ("water_heater", ("water_heater", "water heater", "hot_water")),
+        # water_heater before hvac — "water heat" catches both "water
+        # heater" and "water heating" (and also "heat pump water
+        # heater", which correctly resolves to water_heater because
+        # the pump is the heating element OF the water heater).
+        ("water_heater", ("water_heater", "water heater", "water heat", "hot_water")),
         ("hvac",         ("hvac", "heat_pump", "heatpump", "heat pump",
                           "furnace", "central_air", "central air",
                           "air_conditioning", "air conditioning", "ac_unit",

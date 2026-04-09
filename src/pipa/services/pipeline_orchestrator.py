@@ -848,10 +848,57 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         "basement":        "basement_finish",
     }
 
-    # Source tracking: check which components came from AI extraction
-    # (high confidence) vs defaulted to year_built.
-    sources = ctx.canonical if hasattr(ctx, "canonical") else {}
-    year_built = _to_int(sources.get("year_built"))
+    # Source tracking. For each component, determine whether the year
+    # we're about to use came from the AI Pass 1 extraction or was
+    # defaulted to year_built by the resolver. We do this by looking
+    # directly at ctx.ai_extracted["components"] and re-running the
+    # same canonical_key mapping the resolver used. If we find an AI
+    # component whose canonical key matches AND it has a non-null
+    # year, it was a real signal — even if the year happens to equal
+    # year_built.
+    year_built = _to_int(ctx.canonical.get("year_built"))
+
+    # Build a set of canonical_keys that were AI-extracted with a
+    # non-null year. This mirrors _canonical_component_key in
+    # pipeline.py but we only need to compute the keys once.
+    from pipa.services.pipeline import _resolve_canonical  # noqa: F401  (ensures _COMPONENT_KEYWORDS loaded)
+    ai_sourced_keys: set[str] = set()
+    try:
+        ai_components = (ctx.ai_extracted or {}).get("components") or []
+        # Recreate the substring-matching logic inline (the helper
+        # is a closure inside _resolve_canonical, not exported).
+        _KW = [
+            ("water_heater", ("water_heater", "water heater", "water heat", "hot_water")),
+            ("hvac",         ("hvac", "heat_pump", "heatpump", "heat pump",
+                              "furnace", "central_air", "central air",
+                              "air_conditioning", "air conditioning", "ac_unit",
+                              "heating", "cooling")),
+            ("roof",         ("roof",)),
+            ("electrical_panel", ("electrical_panel", "electrical panel",
+                                  "breaker_box", "service_panel", "panel",
+                                  "electrical")),
+            ("windows",      ("window",)),
+            ("appliances",   ("appliance",)),
+            ("fence",        ("fence", "fencing")),
+            ("siding",       ("siding", "exterior")),
+            ("driveway",     ("driveway",)),
+            ("garage_door",  ("garage_door", "garage door")),
+            ("deck",         ("deck", "decking")),
+            ("patio",        ("patio",)),
+            ("kitchen",      ("kitchen",)),
+            ("basement",     ("basement",)),
+            ("sprinkler",    ("sprinkler", "irrigation")),
+        ]
+        for comp in ai_components:
+            if comp.get("year") is None:
+                continue
+            raw = (comp.get("component") or "").lower().replace("_", " ").strip()
+            for canon, patterns in _KW:
+                if any(p.replace("_", " ") in raw for p in patterns):
+                    ai_sourced_keys.add(canon)
+                    break
+    except Exception:
+        logger.debug("Condition: failed to derive AI-sourced key set", exc_info=True)
 
     components: list[dict] = []
     for canonical_key, mapped_type in type_map.items():
@@ -859,9 +906,13 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         if not year:
             continue
 
-        # Determine source: defaulted to year_built, or real signal
-        is_defaulted = (year_built is not None and year == year_built)
-        source = "default_year_built" if is_defaulted else "ai_extracted"
+        # Source = AI if the resolver saw this canonical_key from the
+        # ai_extracted component list AND we can see it ourselves. Any
+        # component that isn't in ai_sourced_keys must have been filled
+        # in by the resolver's year_built default.
+        is_ai_sourced = canonical_key in ai_sourced_keys
+        is_defaulted = not is_ai_sourced
+        source = "ai_extracted" if is_ai_sourced else "default_year_built"
 
         lifespan = DEFAULT_LIFESPANS.get(mapped_type)
         if lifespan is None:
