@@ -9,19 +9,42 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pipa.core.dependencies import get_db
-from pipa.models.user import WatchlistEntry
+from pipa.models.user import User, WatchlistEntry
 from pipa.schemas.property import WatchlistEntryCreate, WatchlistEntryResponse, WatchlistStageUpdate
 
 router = APIRouter(tags=["watchlist"])
 
-# For now, use a default user ID (single-user desktop app)
-DEFAULT_USER_ID = "85210e37-80b3-4eae-91dc-37ff7ef942a7"
+# Canonical email for the single-user default. Must match
+# pipa.services.property_import.PropertyImportService._get_or_create_default_user
+# so the property-ingest path and the watchlist path agree on the same row.
+_DEFAULT_USER_EMAIL = "default@pipa.local"
+
+
+async def _get_default_user_id(db: AsyncSession) -> str:
+    """Look up (and lazily create) the default user, return its id.
+
+    Previously this module hardcoded a UUID which broke the moment the
+    DB was wiped — the rebuilt user got a fresh UUID and the watchlist
+    endpoint kept inserting against the stale id, hitting a FOREIGN KEY
+    constraint on watchlist_entry.user_id.
+    """
+    result = await db.execute(select(User).where(User.email == _DEFAULT_USER_EMAIL))
+    user = result.scalar_one_or_none()
+    if user is not None:
+        return user.id
+    # Lazily create on first access. Property ingest also creates this
+    # row but the watchlist UI may run before any property has been added.
+    user = User(email=_DEFAULT_USER_EMAIL, display_name="Default User")
+    db.add(user)
+    await db.flush()
+    return user.id
 
 
 @router.get("/watchlist", response_model=list[WatchlistEntryResponse])
 async def list_watchlist(stage: str | None = None, db: AsyncSession = Depends(get_db)):
     """List watchlist entries, optionally filtered by stage."""
-    query = select(WatchlistEntry).where(WatchlistEntry.user_id == DEFAULT_USER_ID)
+    user_id = await _get_default_user_id(db)
+    query = select(WatchlistEntry).where(WatchlistEntry.user_id == user_id)
     if stage:
         query = query.where(WatchlistEntry.stage == stage)
     query = query.order_by(WatchlistEntry.priority.desc(), WatchlistEntry.added_at.desc())
@@ -33,10 +56,12 @@ async def list_watchlist(stage: str | None = None, db: AsyncSession = Depends(ge
 @router.post("/watchlist", response_model=WatchlistEntryResponse, status_code=201)
 async def add_to_watchlist(body: WatchlistEntryCreate, db: AsyncSession = Depends(get_db)):
     """Add a property to the watchlist."""
+    user_id = await _get_default_user_id(db)
+
     # Check for duplicate
     existing = await db.execute(
         select(WatchlistEntry).where(
-            WatchlistEntry.user_id == DEFAULT_USER_ID,
+            WatchlistEntry.user_id == user_id,
             WatchlistEntry.property_id == body.property_id,
         )
     )
@@ -44,7 +69,7 @@ async def add_to_watchlist(body: WatchlistEntryCreate, db: AsyncSession = Depend
         raise HTTPException(status_code=409, detail="Property already on watchlist")
 
     entry = WatchlistEntry(
-        user_id=DEFAULT_USER_ID,
+        user_id=user_id,
         property_id=body.property_id,
         stage=body.stage,
         priority=body.priority,
