@@ -51,13 +51,33 @@ RUN_TYPE_TASKS: dict[str, list[str]] = {
     "run_deep_comp": ["comp_deep"],
     # AI Pass 1 = extraction (components, red flags, motivation, validation
     # against county). Stand-alone version for the "Run pre-AI" button.
-    "rerun_ai_pass_1": ["ai_pass_1"],
-    # AI Pass 2 = synthesis (buyer-facing recommendation, narrative). Needs
-    # AI Pass 1 results to already exist. Stand-alone version for the
-    # "Run AI recommendation" button.
-    "rerun_ai_pass_2": ["ai_pass_2", "decision_packet"],
+    #
+    # Prepended with zillow_scrape + county_scrape + school_lookup so
+    # ctx.listing_data / ctx.county_data / ctx.school_data get loaded
+    # from the DB cache before AI runs. Without these, AI Pass 1 would
+    # see empty inputs and Claude would correctly flag "Listing data
+    # object is empty". The scrape tasks are cheap when cached data
+    # exists (they just load from ListingPageSnapshot / SourceRecord).
+    "rerun_ai_pass_1": [
+        "zillow_scrape", "county_scrape", "school_lookup",
+        "ai_pass_1",
+    ],
+    # AI Pass 2 = synthesis (buyer-facing recommendation, narrative).
+    # Needs AI Pass 1 results in the DB. Stand-alone version for the
+    # "Run AI recommendation" button. We prepend the data loaders AND
+    # resolver + financial + condition so ctx.canonical and
+    # ctx.math_results are populated — Pass 2 reads from both.
+    "rerun_ai_pass_2": [
+        "zillow_scrape", "county_scrape", "school_lookup",
+        "resolver", "financial", "tax", "condition",
+        "ai_pass_2", "decision_packet",
+    ],
     # Both passes back-to-back (legacy convenience).
-    "rerun_ai": ["ai_pass_1", "ai_pass_2", "decision_packet"],
+    "rerun_ai": [
+        "zillow_scrape", "county_scrape", "school_lookup",
+        "ai_pass_1", "resolver", "financial", "tax", "condition",
+        "ai_pass_2", "decision_packet",
+    ],
     "rerun_financials": ["financial", "tax", "condition", "offer", "stress"],
 }
 
@@ -662,6 +682,35 @@ async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 async def _task_resolver(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     """Deterministic resolver: merge sources into canonical values."""
     from pipa.services.pipeline import _resolve_canonical
+
+    # If ctx.ai_extracted is empty (e.g. we're in a rerun_ai_pass_2
+    # run that skipped Pass 1), try to load the most recent
+    # ai_extraction AnalysisRun from the DB so the resolver has
+    # component years / red flags / validation to work with.
+    # Without this, every run that doesn't execute Pass 1 in the
+    # same pipeline loses all the component age data and defaults
+    # everything to year_built.
+    if not ctx.ai_extracted:
+        from pipa.models.analysis_models import AnalysisRun
+        result = await db.execute(
+            select(AnalysisRun)
+            .where(
+                AnalysisRun.property_id == ctx.property_id,
+                AnalysisRun.analysis_type == "ai_extraction",
+            )
+            .order_by(AnalysisRun.created_at.desc())
+            .limit(1)
+        )
+        cached = result.scalar_one_or_none()
+        if cached and cached.output_json:
+            ctx.ai_extracted = cached.output_json
+            logger.info(
+                "Resolver: loaded cached ai_extraction (components=%d, red_flags=%d)",
+                len(cached.output_json.get("components", []) or []),
+                len(cached.output_json.get("red_flags", []) or []),
+            )
+        else:
+            logger.debug("Resolver: no ai_extraction found in ctx or DB")
 
     canonical, conflicts, unknowns = _resolve_canonical(
         ctx.listing_data, ctx.county_data, ctx.ai_extracted,
