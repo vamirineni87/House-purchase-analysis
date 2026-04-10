@@ -943,7 +943,30 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
             "is_defaulted": is_defaulted,
         })
 
-    if not components:
+    # Collect AI-extracted upgrades that lack a year. The condition
+    # table only shows components with a known install year (so it can
+    # do age math), but the listing often calls out improvements like
+    # "in-ground sprinkler system" or "custom shades" with no date.
+    # Surface them in a "noted improvements" sidebar so the buyer can
+    # see at a glance what the seller has done, even when we can't
+    # plug it into the capex forecast.
+    noted_improvements: list[dict] = []
+    try:
+        for comp in (ctx.ai_extracted or {}).get("components", []) or []:
+            if comp.get("year") is not None:
+                continue  # already in the table above
+            name = (comp.get("component") or "").strip()
+            if not name:
+                continue
+            noted_improvements.append({
+                "name": name,
+                "details": (comp.get("details") or "").strip() or None,
+                "confidence": comp.get("confidence", "low"),
+            })
+    except Exception:
+        logger.debug("Condition: failed to collect noted improvements", exc_info=True)
+
+    if not components and not noted_improvements:
         logger.info("Condition: no components found. canonical keys with 'component': %s",
                      [k for k in ctx.canonical if 'component' in k])
         return {"skipped": True, "reason": "no component data"}
@@ -952,8 +975,8 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     # UI naturally show "replace soon" items at the top.
     components.sort(key=lambda c: c["remaining_life"])
 
-    score = score_property_condition(components, current_year=current_year)
-    capex = calculate_capex_forecast(components, current_year=current_year)
+    score = score_property_condition(components, current_year=current_year) if components else 100.0
+    capex = calculate_capex_forecast(components, current_year=current_year) if components else {}
 
     # Total near-term capex across all horizons
     total_capex_10yr = capex.get(10, 0.0)
@@ -964,12 +987,14 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         "score": score,
         "capex_forecast": capex,
         "components": components,
+        "noted_improvements": noted_improvements,
         "summary": {
             "total_components": len(components),
             "urgent_count": urgent_count,      # replace within 2 years
             "monitor_count": monitor_count,    # 3-5 year horizon
             "total_capex_10yr": total_capex_10yr,
             "defaulted_count": sum(1 for c in components if c["is_defaulted"]),
+            "noted_improvements_count": len(noted_improvements),
         },
     }
     ctx.math_results["condition"] = condition_result

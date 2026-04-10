@@ -1,4 +1,8 @@
-"""Analysis endpoints — run financial, tax, investment, condition, offer, stress analysis."""
+"""Analysis endpoints — run financial, tax, investment, offer, stress analysis.
+
+Condition analysis lives in the pipeline orchestrator — it's computed
+from resolver-merged AI/county/listing data, not from the standalone
+ComponentSystem table. Read it via /properties/{id}/analysis-results."""
 
 from __future__ import annotations
 
@@ -10,7 +14,6 @@ from sqlalchemy.orm import selectinload
 from pipa.core.dependencies import get_db
 from pipa.models.property import Property
 from pipa.schemas.analysis import (
-    ConditionAnalysisResult,
     FullAnalysisRequest,
     FullAnalysisResult,
     OfferAnalysisRequest,
@@ -106,25 +109,12 @@ async def run_investment(
 # ------------------------------------------------------------------
 # Condition
 # ------------------------------------------------------------------
-
-
-@router.post(
-    "/properties/{property_id}/analysis/condition",
-    response_model=ConditionAnalysisResult,
-)
-async def run_condition(
-    property_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """Run condition analysis on a property.
-
-    Uses stored component data (roof, HVAC, etc.) to estimate
-    remaining life and forecast capital expenditure.
-    """
-    await _verify_property(db, property_id)
-    result = await AnalysisService.run_condition(db, property_id)
-    return ConditionAnalysisResult(**result)
-
+#
+# The standalone POST /analysis/condition endpoint was removed because
+# AnalysisService.run_condition diverged from the pipeline
+# orchestrator's _task_condition. Read condition data from the latest
+# AnalysisRun via /properties/{id}/analysis-results, or refresh it by
+# running a pipeline (full_pipeline or rerun_ai_pass_2).
 
 # ------------------------------------------------------------------
 # Offer strategy

@@ -73,23 +73,13 @@ class StressTestResult(BaseModel):
 
 
 # --- Condition analysis ---
-
-
-class ConditionComponent(BaseModel):
-    """A single component for condition analysis."""
-
-    type: str
-    install_year: int
-    cost_override: Optional[float] = None
-
-
-class ConditionAnalysisResult(BaseModel):
-    """Result of property condition analysis."""
-
-    condition_score: float
-    capex_forecast: dict[int, float]
-    components_analyzed: int
-
+#
+# ConditionAnalysisResult and ConditionComponent were removed when the
+# divergent AnalysisService.run_condition path was deleted. Condition
+# data now flows through the pipeline orchestrator's _task_condition,
+# whose output is a free-form dict (score, capex_forecast, components,
+# noted_improvements, summary) and is read via the analysis-results
+# endpoint rather than a typed schema.
 
 # --- Full analysis ---
 
@@ -118,9 +108,13 @@ class FullAnalysisRequest(BaseModel):
 
 
 class FullAnalysisResult(BaseModel):
-    """Aggregated result of all analyses."""
+    """Aggregated result of all analyses.
+
+    Condition is intentionally absent — it's produced by the pipeline
+    orchestrator's _task_condition (which reads resolver-merged AI/county
+    canonical data) and read via /properties/{id}/analysis-results.
+    """
 
     financial: dict
     tax: dict
     investment: dict
-    condition: Optional[dict] = None

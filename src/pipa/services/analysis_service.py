@@ -17,10 +17,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from pipa.analysis.condition import (
-    calculate_capex_forecast,
-    score_property_condition,
-)
 from pipa.analysis.financial import run_financial_analysis
 from pipa.analysis.investment import run_investment_analysis
 from pipa.analysis.offer import (
@@ -32,7 +28,6 @@ from pipa.analysis.offer import (
 from pipa.analysis.stress_testing import run_stress_tests
 from pipa.analysis.tax import run_tax_analysis
 from pipa.models.analysis_models import AnalysisRun
-from pipa.models.component import ComponentSystem
 from pipa.models.property import Property
 from pipa.schemas.financial import FinancialAnalysisRequest, FinancialAnalysisResult
 from pipa.schemas.investment import InvestmentAnalysisRequest, InvestmentAnalysisResult
@@ -69,27 +64,6 @@ async def _get_county_tax_rate(db: AsyncSession, property_id: str) -> float:
             elif county == "fairfax":
                 return 0.0111
     return 0.012
-
-
-async def _get_components(
-    db: AsyncSession,
-    property_id: str,
-) -> list[dict]:
-    """Load component systems for a property as plain dicts."""
-    result = await db.execute(
-        select(ComponentSystem).where(
-            ComponentSystem.property_id == property_id
-        )
-    )
-    components = result.scalars().all()
-    return [
-        {
-            "type": c.component_type,
-            "install_year": c.estimated_install_year or datetime.now().year,
-            "cost_override": c.estimated_replacement_cost,
-        }
-        for c in components
-    ]
 
 
 class AnalysisService:
@@ -214,43 +188,15 @@ class AnalysisService:
     # ------------------------------------------------------------------
     # Condition
     # ------------------------------------------------------------------
-
-    @staticmethod
-    async def run_condition(
-        db: AsyncSession,
-        property_id: str,
-    ) -> dict:
-        """Run condition analysis using stored component data."""
-        components = await _get_components(db, property_id)
-
-        if not components:
-            return {
-                "condition_score": 100.0,
-                "capex_forecast": {},
-                "components_analyzed": 0,
-            }
-
-        score = score_property_condition(components)
-        forecast = calculate_capex_forecast(components)
-
-        result = {
-            "condition_score": score,
-            "capex_forecast": forecast,
-            "components_analyzed": len(components),
-        }
-
-        run = AnalysisRun(
-            property_id=property_id,
-            analysis_type="condition",
-            ruleset_version="1.0.0",
-            code_version=_CODE_VERSION,
-            input_snapshot_hash=_input_hash({"components": components}),
-            output_json=result,
-            computed_at=datetime.now(timezone.utc),
-        )
-        db.add(run)
-
-        return result
+    #
+    # NOTE: ``run_condition`` was removed because it diverged from the
+    # pipeline orchestrator's ``_task_condition`` and produced stale
+    # year-built defaults. It read directly from the ``ComponentSystem``
+    # table, which the AI extraction never writes to, so a property
+    # whose listing said "HVAC replaced 2021" still showed HVAC=2007.
+    # The orchestrator path reads the resolver's canonical fields
+    # (which DO include AI-extracted years) and is now the only way
+    # to compute condition. Run via the standard pipeline run-types.
 
     # ------------------------------------------------------------------
     # Offer strategy
@@ -416,12 +362,13 @@ class AnalysisService:
         )
         investment = await AnalysisService.run_investment(db, property_id, inv_params)
 
-        # Condition
-        condition = await AnalysisService.run_condition(db, property_id)
+        # Condition is no longer computed here — see note above. Use the
+        # pipeline orchestrator (run_type=full_pipeline / rerun_ai_pass_2)
+        # to refresh condition data, which reads the resolver-merged
+        # canonical fields instead of the stale ComponentSystem table.
 
         return {
             "financial": financial.model_dump(),
             "tax": tax.model_dump(),
             "investment": investment.model_dump(),
-            "condition": condition,
         }

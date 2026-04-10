@@ -398,8 +398,14 @@ async function _tabCondition(el, id) {
     const results = await api.getAnalysisResults(id);
     const cond = results?.analyses?.condition;
     if (!cond) {
-        _analysisCta(el, id, 'Condition', 'Condition Analysis', 'btn-run-condition',
-            () => api.runConditionAnalysis(id));
+        // No standalone "Run Condition" button anymore — condition is
+        // produced by the pipeline orchestrator from resolver-merged
+        // data. Tell the user to run the pipeline.
+        el.innerHTML = `
+            <p class="text-gray-400 py-8 text-center">
+                No condition data yet. Run the pipeline from the property header
+                to extract component install years from the listing and county records.
+            </p>`;
         return;
     }
 

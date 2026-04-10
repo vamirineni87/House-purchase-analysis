@@ -7,8 +7,6 @@
 
 import { formatCurrency, escapeHtml } from '../../../utils.js';
 import { renderBadge } from '../../../components/badge.js';
-import { showToast } from '../../../toast.js';
-import { api } from '../../../api.js';
 
 export const TITLE = 'Condition';
 export const ID = 'condition';
@@ -39,14 +37,17 @@ export function getStateBadge(state) {
 }
 
 // ── Header extra ───────────────────────────────────────────────────
-
+//
+// No section-level "Run Condition" button. Condition is computed by the
+// pipeline orchestrator from resolver-merged AI/county/listing data, so
+// the only correct way to refresh it is to rerun the pipeline (or the
+// rerun_ai_pass_2 sub-pipeline). A standalone button used to exist that
+// hit AnalysisService.run_condition, but that path read directly from
+// the ComponentSystem table and produced stale year-built defaults
+// instead of the AI-extracted years — see the Fairhunt HVAC=2007 vs
+// 2021 incident.
 export function headerExtra(state) {
-    const loading = state.actionLoading?.condition;
-    return `
-        <button data-action="run-condition"
-                ${loading ? 'disabled' : ''}
-                class="pipa-btn pipa-btn-outline"
-        >${loading ? 'Running\u2026' : 'Run Condition'}</button>`;
+    return '';
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -214,6 +215,7 @@ function renderSummaryBar(data) {
     const urgent = summary.urgent_count ?? 0;
     const monitor = summary.monitor_count ?? 0;
     const defaulted = summary.defaulted_count ?? 0;
+    const noted = summary.noted_improvements_count ?? (data.noted_improvements || []).length;
     const total10yr = summary.total_capex_10yr ?? null;
 
     const pills = [];
@@ -221,6 +223,7 @@ function renderSummaryBar(data) {
     if (urgent > 0)    pills.push(`<span class="text-red-600 font-medium">${urgent} urgent</span>`);
     if (monitor > 0)   pills.push(`<span class="text-amber-600 font-medium">${monitor} monitor</span>`);
     if (defaulted > 0) pills.push(`<span class="text-gray-400">${defaulted} est. from year built</span>`);
+    if (noted > 0)     pills.push(`<span class="text-gray-500">${noted} noted (no year)</span>`);
     if (total10yr != null && total10yr > 0) {
         pills.push(`<span class="text-gray-700">10yr capex: <span class="font-semibold">${formatCurrency(total10yr)}</span></span>`);
     }
@@ -229,6 +232,46 @@ function renderSummaryBar(data) {
     return `
     <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
         ${pills.join('<span class="text-gray-300">·</span>')}
+    </div>`;
+}
+
+/**
+ * Year-less upgrades the AI extracted from the listing description
+ * (e.g. "in-ground sprinkler system", "custom shades", "resurfaced
+ * driveway"). Shown as a compact list — no age math because we have
+ * no install date.
+ */
+function renderNotedImprovements(items) {
+    if (!items || items.length === 0) return '';
+    const rows = items.map(it => {
+        const conf = it.confidence || 'low';
+        const confColor = conf === 'high' ? 'text-green-600'
+            : conf === 'medium' ? 'text-amber-600'
+            : 'text-gray-400';
+        const details = it.details
+            ? `<span class="text-gray-500"> &middot; ${escapeHtml(it.details)}</span>`
+            : '';
+        return `
+        <li class="flex items-start gap-2 py-1 text-xs">
+            <span class="${confColor} mt-0.5">&bull;</span>
+            <div class="flex-1">
+                <span class="font-medium text-gray-800">${escapeHtml(it.name)}</span>${details}
+            </div>
+            <span class="text-[10px] uppercase tracking-wide ${confColor} shrink-0">${conf}</span>
+        </li>`;
+    }).join('');
+
+    return `
+    <div>
+        <div class="flex items-center justify-between mb-1.5">
+            <h4 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                Other Noted Improvements
+            </h4>
+            <span class="text-[10px] text-gray-400">${items.length} from listing &mdash; no install year</span>
+        </div>
+        <div class="bg-white border border-gray-200 rounded p-2">
+            <ul class="divide-y divide-gray-100">${rows}</ul>
+        </div>
     </div>`;
 }
 
@@ -273,12 +316,14 @@ export function render(state) {
     }
 
     const components = data.components || [];
+    const noted = data.noted_improvements || [];
 
     return `
     <div class="space-y-3">
         ${renderScoreBar(data)}
         ${renderSummaryBar(data)}
         ${renderComponentsTable(components)}
+        ${renderNotedImprovements(noted)}
         ${renderCapexForecast(data)}
     </div>`;
 }
@@ -286,25 +331,6 @@ export function render(state) {
 // ── Bind ────────────────────────────────────────────────────────────
 
 export function bind(container, state, actions) {
-    // Wire header Run Condition button
-    const headerBtn = container.querySelector('[data-action="run-condition"]');
-    if (headerBtn) {
-        headerBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            runCondition(state, actions);
-        });
-    }
-}
-
-async function runCondition(state, actions) {
-    try {
-        showToast('Running condition analysis\u2026', 'info');
-        await api.runConditionAnalysis(state.property.id);
-        showToast('Condition analysis complete', 'success');
-        if (actions?.rerenderSection) {
-            actions.rerenderSection('condition');
-        }
-    } catch (err) {
-        showToast(err.message || 'Condition analysis failed', 'error');
-    }
+    // Nothing to bind — the section is read-only. Use the global "Run
+    // Pipeline" action in the header to refresh condition data.
 }

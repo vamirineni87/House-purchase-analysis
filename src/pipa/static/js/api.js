@@ -176,13 +176,6 @@ export const api = {
         });
     },
 
-    /** Run condition / capex analysis. */
-    runConditionAnalysis(propertyId) {
-        return request(`/properties/${propertyId}/analysis/condition`, {
-            method: 'POST',
-        });
-    },
-
     /** Run offer strategy analysis. */
     runOfferAnalysis(propertyId, data) {
         return request(`/properties/${propertyId}/analysis/offer`, {
