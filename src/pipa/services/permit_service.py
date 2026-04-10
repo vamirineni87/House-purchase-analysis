@@ -158,14 +158,23 @@ class PermitService:
 
         If an existing component is found but the permit has a newer
         install year, the component is updated.
+
+        Tolerates legacy duplicate rows: there's no unique constraint on
+        ``(property_id, component_type)``, and historically the data
+        refresh path inserted unconditionally on every county scrape, so
+        some properties have multiple rows for the same component type.
+        We pick the most recently created row (the one most likely to
+        carry the freshest install year) and let the caller proceed.
+        Use ``.first()`` instead of ``.scalar_one_or_none()`` so a
+        duplicate doesn't crash the entire pipeline task.
         """
         result = await db.execute(
             select(ComponentSystem).where(
                 ComponentSystem.property_id == property_id,
                 ComponentSystem.component_type == component_type,
-            )
+            ).order_by(ComponentSystem.created_at.desc())
         )
-        component = result.scalar_one_or_none()
+        component = result.scalars().first()
 
         if component is not None:
             # Update if the permit gives a more recent install year

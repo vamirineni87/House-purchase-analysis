@@ -630,6 +630,16 @@ async def _parse_county_into_tables(
                 ))
 
     # --- Components (for condition analysis) ---
+    # Seed the 7 standard house systems with year_built as the default
+    # install year. The permits task and AI extraction can then update
+    # individual rows with confirmed years (e.g. "FURNACE 2016" permit
+    # → hvac install_year = 2016, confidence = "confirmed").
+    #
+    # Critical: dedupe on (property_id, component_type) before inserting.
+    # This function runs on every county refresh / pipeline run, and
+    # without the check we'd accumulate N copies of every component each
+    # time. (See the Connor Ct incident — 14 rows for 7 component types
+    # after one re-run.)
     year_built = _parse_int(summary.get("year_built"))
     if year_built:
         component_types = {
@@ -641,7 +651,17 @@ async def _parse_county_into_tables(
             "exterior_siding": {"expected_life": 30},
             "appliances": {"expected_life": 15},
         }
+        existing_q = await db.execute(
+            select(ComponentSystem.component_type).where(
+                ComponentSystem.property_id == property_id,
+                ComponentSystem.component_type.in_(component_types.keys()),
+            )
+        )
+        existing_types = {row[0] for row in existing_q.all()}
+        created = 0
         for comp_type, meta in component_types.items():
+            if comp_type in existing_types:
+                continue
             db.add(ComponentSystem(
                 property_id=property_id,
                 component_type=comp_type,
@@ -649,7 +669,12 @@ async def _parse_county_into_tables(
                 expected_lifespan=meta["expected_life"],
                 confidence="estimated",
             ))
-        logger.info("Created %d component records from year_built=%d", len(component_types), year_built)
+            created += 1
+        if created:
+            logger.info(
+                "Created %d new component records from year_built=%d (%d already existed)",
+                created, year_built, len(existing_types),
+            )
 
     await db.flush()
     logger.info("Parsed county data into tables for property %s", property_id)
