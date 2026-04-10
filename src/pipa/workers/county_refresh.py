@@ -17,6 +17,7 @@ from pipa.models.freshness import DataFreshnessPolicy
 from pipa.models.property import Property
 from pipa.models.source import SourceRecord
 from pipa.models.user import WatchlistEntry
+from pipa.utils.datetime_utils import as_utc
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,9 @@ async def _check_property_freshness(
         )
         latest = result.scalar_one_or_none()
 
-        if latest is None or latest.fetched_at < cutoff:
+        # SQLite returns naive datetimes even from DateTime(timezone=True)
+        # columns; coerce before comparing against the aware cutoff.
+        if latest is None or as_utc(latest.fetched_at) < cutoff:
             stale_sources.append(source_category)
 
     return stale_sources

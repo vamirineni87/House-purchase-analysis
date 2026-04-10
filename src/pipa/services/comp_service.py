@@ -1138,25 +1138,10 @@ class CompService:
         """
         normed = _normalize_address(comp_address)
         from datetime import timedelta
+        from pipa.utils.datetime_utils import as_utc as _as_utc
 
         logger.debug("[enrich] comp_address=%s normed=%s force_refresh=%s ttl=%dh subject_pid=%s",
                      comp_address, normed, force_refresh, ttl_hours, subject_property_id)
-
-        def _as_utc(dt):
-            """Coerce a datetime to UTC-aware.
-
-            SQLite stores datetimes as naive strings — even when the
-            column is declared ``DateTime(timezone=True)``, values come
-            back without a tzinfo. Comparing them against a
-            ``datetime.now(timezone.utc)`` raises TypeError. This
-            helper treats a naive datetime as already-in-UTC and
-            attaches the tzinfo.
-            """
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt
 
         # --- Check cache: do we already have county data for this comp? ---
         if not force_refresh:
