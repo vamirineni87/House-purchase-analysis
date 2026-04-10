@@ -39,16 +39,28 @@ async def get_market_data(
 
     zip_code = addr.zip_code[:5]  # Normalize to 5-digit
 
-    # Try PropData first (instant API, richer data)
+    # Try PropData first (instant API, richer data).
+    #
+    # CRITICAL: pass cache_dir so BaseClient's disk cache is actually
+    # enabled. Without it, every page load → live PropData hit, which
+    # blew through the free tier monthly quota in days. With a 7-day
+    # TTL the same ZIP only re-fetches weekly (market data updates
+    # monthly, so 7 days is conservative). The cache key is full URL
+    # + params, so two properties in the same ZIP share a cache hit.
     propdata_snapshot = None
     indicators = {}
     try:
+        from pathlib import Path
         from pipa.core.config import load_config
         cfg = load_config()
         propdata_key = cfg.api_keys.propdata_api_key
         if propdata_key:
             from pipa.clients.propdata import PropDataClient
-            pd = PropDataClient(api_key=propdata_key)
+            pd = PropDataClient(
+                api_key=propdata_key,
+                cache_dir=Path(cfg.storage_dir) / "cache" / "propdata",
+                cache_ttl_hours=24 * 7,  # 7 days — market data is monthly
+            )
             propdata_snapshot = await pd.get_market_snapshot(zip_code)
             if propdata_snapshot:
                 indicators = pd.extract_market_indicators(propdata_snapshot)
