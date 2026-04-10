@@ -18,9 +18,15 @@ if sys.platform == "win32" and not reload:
 import uvicorn
 
 if __name__ == "__main__":
+    # Bind to 0.0.0.0 so the server is reachable from other devices on
+    # the LAN — user VPNs into their home network when researching
+    # properties on the road and needs PIPA to pull up from a phone/
+    # laptop. There's no auth on the API; LAN exposure is acceptable
+    # because reaching this host requires being on the trusted network
+    # (or VPN'd into it).
     uvicorn.run(
         "pipa.api.app:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=8000,
         reload=reload,
         loop="none" if (sys.platform == "win32" and not reload) else "auto",
