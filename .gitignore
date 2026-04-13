@@ -23,6 +23,9 @@ env/
 # Config with secrets
 config.yaml
 .env
+APIkeys.txt
+*_keys.txt
+*api_keys*
 
 # Reports output
 reports/
@@ -40,8 +43,11 @@ htmlcov/
 # Cache
 .cache/
 
-# Database
+# Database (include SQLite WAL mode sidecars: -shm, -wal, -journal)
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 
@@ -76,4 +82,9 @@ test-results/
 *_cookies.json
 
 # Server logs
-logs/server.log
+logs/*.log
+
+# Scratch scripts and raw probe outputs (one-off investigations)
+test_zillow_*.py
+zillow_*.json
+zillow_*_raw.json
