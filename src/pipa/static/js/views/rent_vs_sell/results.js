@@ -326,20 +326,32 @@ function renderDriverBridge(outputs, state) {
                 <span class="text-xs font-mono ${deltaColor}">Δ: ${formatCurrency(delta)}</span>
             </div>
         </div>
-        <div class="p-3"><canvas id="rvs-chart-bridge" height="280"></canvas></div>
+        <div class="p-3">
+            <div class="relative w-full" style="height: 360px">
+                <canvas id="rvs-chart-bridge"></canvas>
+            </div>
+        </div>
     </div>`;
 }
 
 function renderChartsMarkup() {
+    // Each canvas is wrapped in a position-relative box with an EXPLICIT
+    // pixel height. Chart.js's responsive+maintainAspectRatio=false mode
+    // reads the parent's box; without a stable height it feedback-loops
+    // on every destroy/recreate and the charts grow exponentially.
     return `
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         <div class="bg-white border border-gray-200 rounded-lg p-3">
             <div class="text-xs font-semibold text-gray-700 uppercase mb-2">Net worth over time</div>
-            <canvas id="rvs-chart-nw" height="200"></canvas>
+            <div class="relative w-full" style="height: 220px">
+                <canvas id="rvs-chart-nw"></canvas>
+            </div>
         </div>
         <div class="bg-white border border-gray-200 rounded-lg p-3">
             <div class="text-xs font-semibold text-gray-700 uppercase mb-2">Monthly cash flow</div>
-            <canvas id="rvs-chart-cf" height="200"></canvas>
+            <div class="relative w-full" style="height: 220px">
+                <canvas id="rvs-chart-cf"></canvas>
+            </div>
         </div>
     </div>`;
 }
