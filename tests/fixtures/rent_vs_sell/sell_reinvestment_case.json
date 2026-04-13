@@ -1,0 +1,116 @@
+{
+  "calc_version": "1.1.0",
+  "expected": {
+    "lean": "too_close",
+    "strategy_net_worths": {
+      "keep_10y": 1027840.2362622076,
+      "keep_5y": 852536.1582317413,
+      "rent_then_sell": 804101.6768866398,
+      "sell_now": 854879.391859234,
+      "sell_now_10y": 1064898.191232988
+    },
+    "top_line": {
+      "extra_new_home_loan": 436287.0,
+      "keep_10y_net_worth": 1027840.2362622076,
+      "keep_5y_net_worth": 852536.1582317413,
+      "monthly_stress_delta": 2746.1636648967515,
+      "monthly_stress_keep": 8667.539172543262,
+      "monthly_stress_sell": 5921.37550764651,
+      "net_interest_drag_monthly": 2964.122100000001,
+      "rent_then_sell_net_worth": 804101.6768866398,
+      "required_appreciation_to_breakeven_10y": -0.29794921874999997,
+      "required_appreciation_to_breakeven_5y": 0.103125,
+      "section_121_window_status": "open",
+      "sell_now_net_worth_10y": 1064898.191232988,
+      "sell_now_net_worth_5y": 854879.391859234,
+      "trapped_equity": 439287.0
+    }
+  },
+  "input_schema_version": "1.1.0",
+  "inputs": {
+    "current_home": {
+      "bad_debt_pct_of_gross_rent": 0.005,
+      "basis": 478000,
+      "building_pct": 0.7026,
+      "concession_pct_at_sale": 0.0,
+      "current_home_sell_cost_pct_future": 0.07,
+      "initial_lease_up_vacancy_months": 1.0,
+      "insurance_conversion_bump_pct": 0.15,
+      "land_pct": 0.2974,
+      "leasing_fee_pct_of_annual_rent": 0.05,
+      "loan_balance": 295413,
+      "maintenance_inflation_annual_pct": 0.03,
+      "monthly_hoa": 0,
+      "monthly_insurance": 120,
+      "monthly_misc_owner_paid": 80,
+      "monthly_principal_interest": 1245,
+      "monthly_rent_base": 3500,
+      "monthly_taxes": 620,
+      "mortgage_rate": 0.025,
+      "move_out_month": "2026-05",
+      "pre_sale_vacancy_months": 0.5,
+      "property_management_pct": 0.0,
+      "rent_start_month": "2026-06",
+      "reserve_months_per_year": 2,
+      "routine_maintenance_pct_of_rent": 0.05,
+      "sale_prep_cost_flat": 3000,
+      "self_manage": true,
+      "sell_cost_pct_now": 0.07,
+      "total_rent_change_10y": 0.0,
+      "total_rent_change_5y": 0.0,
+      "total_value_change_10y": 0.2,
+      "total_value_change_5y": 0.1,
+      "turnover_cost_per_event": 2500,
+      "turnover_frequency_months": 24,
+      "vacancy_months_per_year_base": 0.5,
+      "value_today": 790000
+    },
+    "modeling": {
+      "rent_then_sell_date": "2029-05"
+    },
+    "new_home": {
+      "base_down_pct": 0.2,
+      "initial_rate": 0.0646,
+      "loan_term_years": 30,
+      "monthly_hoa": 0,
+      "monthly_insurance": 150,
+      "monthly_taxes": 800,
+      "purchase_price": 1315000
+    },
+    "new_home_drag": {
+      "new_home_maintenance_pct_of_home_value_annual": 0.01
+    },
+    "ownership_cost_growth": {
+      "current_home_hoa_growth_annual_pct": 0.03,
+      "current_home_insurance_growth_annual_pct": 0.05,
+      "current_home_misc_growth_annual_pct": 0.03,
+      "current_home_tax_growth_annual_pct": 0.03,
+      "new_home_hoa_growth_annual_pct": 0.03,
+      "new_home_insurance_growth_annual_pct": 0.05,
+      "new_home_tax_growth_annual_pct": 0.03
+    },
+    "refinance": {
+      "cost_pct": 0.015,
+      "enabled": false,
+      "selected_path": "none",
+      "year3_rate": 0.055,
+      "year5_rate": 0.0475,
+      "year7_rate": 0.0425
+    },
+    "reinvestment": {
+      "invest_initial_sale_surplus_cash": false,
+      "invest_monthly_sell_savings": true,
+      "monthly_savings_reinvestment_return_annual_pct": 0.04
+    },
+    "taxes": {
+      "depreciation_recovery_rate": 0.25,
+      "federal_ltcg_rate": 0.15,
+      "federal_ordinary_rate": 0.24,
+      "niit_enabled": false,
+      "niit_rate": 0.038,
+      "release_suspended_losses_on_taxable_disposition": true,
+      "section_121_mfj": 500000,
+      "virginia_rate": 0.0575
+    }
+  }
+}

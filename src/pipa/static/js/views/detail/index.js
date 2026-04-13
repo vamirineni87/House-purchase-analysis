@@ -69,6 +69,7 @@ let _state = {
     quickComp: null,
     deepComp: null,
     conditionData: null,
+    componentOverrides: {},
     freshness: [],
     schools: [],
     notes: [],
@@ -382,6 +383,14 @@ async function lazyLoadAll() {
             rerenderSection('ai-analysis');
         }).catch(() => {}),
 
+        // Manual component install-year overrides — applied on read by
+        // condition.js so the user's edits survive a page refresh even
+        // before the next pipeline run rewrites stored condition data.
+        api.listComponentOverrides(pid).then(d => {
+            _state.componentOverrides = d || {};
+            rerenderSection('condition');
+        }).catch(() => {}),
+
         api.getCountyData(pid).then(d => {
             _state.countyData = d;
             rerenderSection('summary-actions');
@@ -522,6 +531,9 @@ async function handleAction(actionId, container) {
             _state.pipelineRuns = [run, ..._state.pipelineRuns];
             showToast('AI recommendation started — takes ~1 minute', 'success');
             startPipelinePolling();
+        },
+        'action-rent-vs-sell': async () => {
+            window.location.hash = `#rent-vs-sell?new_home_property_id=${encodeURIComponent(_state.propertyId)}`;
         },
     };
 

@@ -25,6 +25,7 @@ from pipa.models.decision import DecisionCase, DueDiligenceItem, RecommendationS
 from pipa.models.development import DevelopmentCase, ZoningCase
 from pipa.models.pipeline_run import PipelineRun, PipelineTaskRun
 from pipa.models.app_setting import AppSetting
+from pipa.models.rent_vs_sell import CurrentHomeProfile, RentVsSellRun
 
 __all__ = [
     "Base",
@@ -76,4 +77,6 @@ __all__ = [
     "PipelineRun", "PipelineTaskRun",
     # app_setting.py
     "AppSetting",
+    # rent_vs_sell.py
+    "CurrentHomeProfile", "RentVsSellRun",
 ]

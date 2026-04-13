@@ -133,6 +133,7 @@ export function renderHeader(state) {
       ${btn('action-deep-comp', 'Deep Comp', 'Find neighborhood sales → scrape each from County + Zillow → appraisal + AI value opinion (~10 min)')}
       ${btn('action-rerun-ai-pass-1', 'Run pre-AI', 'AI Pass 1 only — extract components, red flags, seller motivation, validate listing vs county. Slow (~3-5 min).')}
       ${btn('action-rerun-ai-pass-2', 'Run AI recommendation', 'AI Pass 2 + decision packet — buyer-facing recommendation, narrative, pursue/maybe/pass. Requires Pass 1 results to already exist.')}
+      ${btn('action-rent-vs-sell', 'Rent vs Sell', 'Analyze this property as your next home — compares sell/keep/rent strategies on your current home')}
       <select id="stage-select" class="text-xs border border-gray-300 rounded px-2 py-1.5">
         <option value="" disabled ${!watchEntry ? 'selected' : ''}>${watchEntry ? 'Stage...' : 'Watchlist'}</option>
         ${stageOptions}
@@ -153,6 +154,7 @@ export function bindHeader(container, state, handlers) {
         'action-refresh-all', 'action-run-pipeline',
         'action-refresh-listing', 'action-refresh-county', 'action-refresh-schools',
         'action-deep-comp', 'action-rerun-ai-pass-1', 'action-rerun-ai-pass-2',
+        'action-rent-vs-sell',
     ];
     for (const id of actionIds) {
         const btn = container.querySelector(`#${id}`);

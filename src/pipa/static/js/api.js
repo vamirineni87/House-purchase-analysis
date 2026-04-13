@@ -341,6 +341,41 @@ export const api = {
     },
 
     // ================================================================
+    // Component overrides — manual install-year corrections
+    // ================================================================
+
+    /** List all manual component overrides for a property. */
+    listComponentOverrides(propertyId) {
+        const pid = encodeURIComponent(propertyId);
+        return request(`/properties/${pid}/component-overrides`);
+    },
+
+    /**
+     * Set or update a manual component install-year override.
+     * @param {string} propertyId
+     * @param {string} canonicalKey  e.g. 'hvac', 'water_heater', 'roof'
+     * @param {number} year          Install year (1800..2100)
+     * @param {string} [notes]       Optional context
+     */
+    setComponentOverride(propertyId, canonicalKey, year, notes) {
+        const pid = encodeURIComponent(propertyId);
+        const key = encodeURIComponent(canonicalKey);
+        return request(`/properties/${pid}/component-overrides/${key}`, {
+            method: 'PUT',
+            body: JSON.stringify({ year, notes: notes || null }),
+        });
+    },
+
+    /** Remove a manual override (revert to AI/county/year_built default). */
+    deleteComponentOverride(propertyId, canonicalKey) {
+        const pid = encodeURIComponent(propertyId);
+        const key = encodeURIComponent(canonicalKey);
+        return request(`/properties/${pid}/component-overrides/${key}`, {
+            method: 'DELETE',
+        });
+    },
+
+    // ================================================================
     // Alerts
     // ================================================================
 
@@ -440,6 +475,115 @@ export const api = {
     /** List documents for a property. */
     listDocuments(propertyId) {
         return request(`/properties/${propertyId}/documents`);
+    },
+
+    // ================================================================
+    // Rent vs Sell
+    // ================================================================
+
+    /** Compute all four strategies from an assumption set. */
+    computeRentVsSell(assumptions) {
+        return request('/rent-vs-sell/calculate', {
+            method: 'POST',
+            body: JSON.stringify({ assumptions }),
+        });
+    },
+
+    /** Compute a sensitivity heatmap (server-side LRU cached). */
+    computeRentVsSellSensitivity(assumptions, preset, comparator, horizon) {
+        return request('/rent-vs-sell/sensitivity', {
+            method: 'POST',
+            body: JSON.stringify({
+                assumptions,
+                preset: preset || 'value_x_rent',
+                comparator: comparator || 'sell_vs_keep_5y',
+                horizon: horizon || '5y',
+            }),
+        });
+    },
+
+    /** Pull new_home fields prefilled from a PIPA property. */
+    rentVsSellPrefill(propertyId) {
+        const pid = encodeURIComponent(propertyId);
+        return request(`/rent-vs-sell/prefill/${pid}`);
+    },
+
+    /** List current-home profiles. */
+    listCurrentHomeProfiles() {
+        return request('/rent-vs-sell/current-home-profiles');
+    },
+
+    createCurrentHomeProfile(data) {
+        return request('/rent-vs-sell/current-home-profiles', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    updateCurrentHomeProfile(id, data) {
+        const pid = encodeURIComponent(id);
+        return request(`/rent-vs-sell/current-home-profiles/${pid}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    },
+
+    deleteCurrentHomeProfile(id) {
+        const pid = encodeURIComponent(id);
+        return request(`/rent-vs-sell/current-home-profiles/${pid}`, {
+            method: 'DELETE',
+        });
+    },
+
+    bootstrapDefaultCurrentHomeProfile() {
+        return request('/rent-vs-sell/current-home-profiles/bootstrap-default', {
+            method: 'POST',
+        });
+    },
+
+    listRentVsSellRuns() {
+        return request('/rent-vs-sell/runs');
+    },
+
+    getRentVsSellRun(id) {
+        const rid = encodeURIComponent(id);
+        return request(`/rent-vs-sell/runs/${rid}`);
+    },
+
+    createRentVsSellRun(data) {
+        return request('/rent-vs-sell/runs', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    updateRentVsSellRun(id, data) {
+        const rid = encodeURIComponent(id);
+        return request(`/rent-vs-sell/runs/${rid}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    },
+
+    deleteRentVsSellRun(id) {
+        const rid = encodeURIComponent(id);
+        return request(`/rent-vs-sell/runs/${rid}`, {
+            method: 'DELETE',
+        });
+    },
+
+    duplicateRentVsSellRun(id) {
+        const rid = encodeURIComponent(id);
+        return request(`/rent-vs-sell/runs/${rid}/duplicate`, {
+            method: 'POST',
+        });
+    },
+
+    compareRentVsSellRuns(runIds) {
+        return request('/rent-vs-sell/runs/compare', {
+            method: 'POST',
+            body: JSON.stringify({ run_ids: runIds }),
+        });
     },
 
     // ================================================================

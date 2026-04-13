@@ -91,6 +91,8 @@ def create_app() -> FastAPI:
     from pipa.api.v1.pipeline import router as pipeline_router
     from pipa.api.v1.settings import router as settings_router
     from pipa.api.v1.market import router as market_router
+    from pipa.api.v1.component_overrides import router as component_overrides_router
+    from pipa.api.v1.rent_vs_sell import router as rent_vs_sell_router
 
     app.include_router(properties_router, prefix="/api/v1")
     app.include_router(watchlist_router, prefix="/api/v1")
@@ -109,6 +111,8 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(market_router, prefix="/api/v1")
+    app.include_router(component_overrides_router, prefix="/api/v1")
+    app.include_router(rent_vs_sell_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

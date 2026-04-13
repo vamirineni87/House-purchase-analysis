@@ -30,6 +30,7 @@ import * as propertiesView from './views/properties.js';
 import * as alertsView from './views/alerts.js';
 import * as comparisonView from './views/comparison.js';
 import * as settingsView from './views/settings.js';
+import * as rentVsSellView from './views/rent_vs_sell/index.js';
 
 // ── DOM refs ────────────────────────────────────────────────────────
 
@@ -39,12 +40,14 @@ const navLinks = () => document.querySelectorAll('#sidebar-nav .nav-link');
 // ── Route registration ──────────────────────────────────────────────
 
 initRouter({
-    'dashboard':    (params, query) => dashboardView.load(appEl()),
-    'properties':   (params, query) => propertiesView.load(appEl()),
-    'property/:id': renderPropertyDetail,
-    'alerts':       (params, query) => alertsView.load(appEl()),
-    'comparison':   (params, query) => comparisonView.load(appEl()),
-    'settings':     (params, query) => settingsView.load(appEl()),
+    'dashboard':             (params, query) => dashboardView.load(appEl()),
+    'properties':            (params, query) => propertiesView.load(appEl()),
+    'property/:id':          renderPropertyDetail,
+    'alerts':                (params, query) => alertsView.load(appEl()),
+    'comparison':            (params, query) => comparisonView.load(appEl()),
+    'settings':              (params, query) => settingsView.load(appEl()),
+    'rent-vs-sell':          (params, query) => rentVsSellView.load(appEl(), query),
+    'rent-vs-sell/compare':  (params, query) => rentVsSellView.load(appEl(), query),
 });
 
 // ── Sidebar active-link highlight ───────────────────────────────────

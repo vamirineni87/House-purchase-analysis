@@ -1,0 +1,884 @@
+ Ready to code?
+
+ Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Rent vs Sell Analysis — PIPA-Native Module
+
+ Context
+
+ The user owns a low-rate home (43629 White Cap Ter) and is shopping for a second home through PIPA. The core decision is not "should I collect rent?" but "is the return on the equity trapped in the current home better
+ than the guaranteed return from using that equity to avoid a 6.46% mortgage on the new home?"
+
+ This adds a new top-level "Rent vs Sell" page to PIPA that computes four strategies (Sell Now / Keep 5Y / Keep 10Y / Rent-Then-Sell ~2029) from a single assumption set, with a strategy-aware sensitivity heatmap as a
+ first-class feature. Launch is primary from the property detail page ("Analyze as Next Home") and secondary via the left nav.
+
+ Key abstraction (non-negotiable):
+ - Strategy = what the user does (sell now, keep 5Y, keep 10Y, rent-then-sell)
+ - Scenario = market/financing assumptions applied to all strategies
+ - Saved Run = one named assumption set + all computed strategy outputs, optionally linked to a target property
+
+ Built PIPA-native: vanilla JS, Tailwind CDN, load()/render()/bind(), Python calc engine server-side, SQLite persistence, Chart.js via CDN.
+
+ Files — Complete Inventory
+
+ Create — Backend (6 new files)
+
+ ┌───────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                       File                        │                                                   Purpose                                                   │
+ ├───────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/models/rent_vs_sell.py                   │ SQLAlchemy models: CurrentHomeProfile, RentVsSellRun                                                        │
+ ├───────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ alembic/versions/{rev}_add_rent_vs_sell_tables.py │ Migration for both tables                                                                                   │
+ ├───────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/analysis/rent_vs_sell.py                 │ Pure calc engine — mortgage, refi, rent path, depreciation, Section 121, all 4 strategies, sensitivity grid │
+ ├───────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/schemas/rent_vs_sell.py                  │ Pydantic request/response models (nested assumptions + outputs)                                             │
+ ├───────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/api/v1/rent_vs_sell.py                   │ FastAPI router: calculate, sensitivity, runs CRUD, profiles CRUD                                            │
+ ├───────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ tests/test_rent_vs_sell_engine.py                 │ Known-answer tests using the ChatGPT-established base case                                                  │
+ └───────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ Create — Frontend (7 new files)
+
+ ┌──────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                         File                         │                                                        Purpose                                                         │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/index.js       │ Analysis page coordinator (load/render/bind), data loading, /calculate debouncing                                      │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/inputs.js      │ 4 collapsible cards only: Current Home / New Home / Market Assumptions / Advanced (Refi + Tax)                         │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/results.js     │ Top-line metric cards, lens tabs ([5Y][10Y][Rent-Then-Sell]), strategy comparison table, driver bridge                 │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/charts.js      │ Chart.js wrappers: net-worth-over-time, monthly-cash-flow, strategy-specific driver bridge                             │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/sensitivity.js │ HTML-table heatmap. User-triggered refresh only, with request-hash caching                                             │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/runs.js        │ Saved runs list sidebar (load, rename, delete, duplicate, checkbox-to-compare)                                         │
+ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/rent_vs_sell/compare.js     │ Dedicated compare page — 2–4 runs side-by-side, assumption diffs + output diffs, route #rent-vs-sell/compare?ids=a,b,c │
+ └──────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ Modify — Backend (2 files)
+
+ ┌─────────────────────────────┬──────────────────────────────────────────────────────────────────┐
+ │            File             │                              Change                              │
+ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+ │ src/pipa/api/app.py         │ Import and include_router(rent_vs_sell_router, prefix="/api/v1") │
+ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+ │ src/pipa/models/__init__.py │ Export CurrentHomeProfile, RentVsSellRun                         │
+ └─────────────────────────────┴──────────────────────────────────────────────────────────────────┘
+
+ Modify — Frontend (4 files)
+
+ ┌───────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                   File                    │                                                                                  Change                                                                                  │
+ ├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/index.html                │ Add <script src="https://cdn.jsdelivr.net/npm/chart.js"> + <a href="#rent-vs-sell"> nav link                                                                             │
+ ├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/app.js                 │ Import rentVsSellView, register 'rent-vs-sell': ... route                                                                                                                │
+ ├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/api.js                 │ Add helpers: computeRentVsSell, computeSensitivity, listRentVsSellRuns, getRentVsSellRun, saveRentVsSellRun, deleteRentVsSellRun, listCurrentHomeProfiles,               │
+ │                                           │ upsertCurrentHomeProfile, prefillFromProperty                                                                                                                            │
+ ├───────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ src/pipa/static/js/views/detail/header.js │ Add compact "Rent vs Sell" button in the action button group that navigates to #rent-vs-sell?new_home_property_id={id}                                                   │
+ └───────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ Database Schema
+
+ Table 1: current_home_profile
+
+ Reusable "my home" profiles. Keyed by UUID. First-run auto-seeds one profile with the user's White Cap Ter defaults.
+
+ class CurrentHomeProfile(Base, UUIDMixin, TimestampMixin):
+     __tablename__ = "current_home_profile"
+     name: Mapped[str] = mapped_column(String(100), nullable=False)
+     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+     config_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+     # config_json keys: value_today, sell_cost_pct, loan_balance, mortgage_rate,
+     # monthly_piti, monthly_hoa, basis, land_pct, building_pct,
+     # move_out_month (YYYY-MM), rent_start_month (YYYY-MM),
+     # monthly_rent_base, reserve_months_per_year
+
+ Table 2: rent_vs_sell_run
+
+ Saved runs. assumptions_json is the source of truth. summary_json is a lightweight cached headline snapshot (top-line metrics + strategy net-worth numbers) so the list page can render without recomputing. Full
+ outputs_json is cached only — on load, if calc_version < current engine version, the run is marked stale and recomputed before rendering.
+
+ class RentVsSellRun(Base, UUIDMixin, TimestampMixin):
+     __tablename__ = "rent_vs_sell_run"
+     name: Mapped[str] = mapped_column(String(100), nullable=False)
+     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+     scenario_label: Mapped[str] = mapped_column(String(32), default="base")  # base/recession/bull/custom
+     target_property_id: Mapped[str | None] = mapped_column(String, ForeignKey("property.id"), nullable=True)
+     current_home_profile_id: Mapped[str | None] = mapped_column(String, ForeignKey("current_home_profile.id"), nullable=True)
+     comparison_horizon_years: Mapped[int] = mapped_column(Integer, default=10)
+
+     # Source of truth + provenance
+     assumptions_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+     target_property_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # frozen at save time
+     current_home_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)      # frozen at save time
+     created_from_property_detail: Mapped[bool] = mapped_column(Boolean, default=False)
+     source_prefill_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+     # Cached outputs (authoritative-ish, but recomputed if stale)
+     calc_version: Mapped[str] = mapped_column(String(32), nullable=False)           # engine version tag
+     input_schema_version: Mapped[str] = mapped_column(String(32), nullable=False)   # inputs schema tag
+     summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)          # headline metrics only
+     outputs_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)          # full nested outputs, cached
+
+ Engine versions live as module-level constants in analysis/rent_vs_sell.py:
+ CALC_VERSION = "1.0.0"           # bumped when any formula changes
+ INPUT_SCHEMA_VERSION = "1.0.0"   # bumped when input keys change
+
+ Stale detection: GET /runs/{id} compares stored calc_version to analysis.rent_vs_sell.CALC_VERSION. If mismatched, the endpoint:
+ 1. Recomputes from assumptions_json
+ 2. Updates outputs_json, summary_json, and calc_version in place
+ 3. Returns the fresh outputs with a recomputed: true flag so the UI can surface a "refreshed from new engine" toast
+
+ Provenance: at save time, the router snapshots the relevant listing fields from the target property (price, HOA, taxes, insurance) into target_property_snapshot_json, and the current-home profile config into
+ current_home_snapshot_json. This protects saved runs from silent drift when listing data refreshes later.
+
+ Seed defaults for first-run White Cap Ter profile:
+ # Core
+ value_today: 790000
+ basis: 478000
+ loan_balance: 295413
+ mortgage_rate: 0.025
+
+ # Monthly carrying costs (split — no PITI lump)
+ monthly_principal_interest: 1245     # derived from mortgage_schedule on the current loan
+ monthly_taxes: 620                   # approx from county data
+ monthly_insurance: 120
+ monthly_hoa: 0
+ monthly_misc_owner_paid: 80          # utilities, sewer, minor recurring
+
+ # Rental conversion adjustments
+ insurance_conversion_bump_pct: 0.15
+ initial_lease_up_vacancy_months: 1.0
+
+ sell_cost_pct_now: 0.07
+ monthly_rent_base: 3500
+ land_pct: 0.2974
+ building_pct: 0.7026
+ move_out_month: "2026-05"
+ rent_start_month: "2026-06"
+
+ # Rental operations (new)
+ reserve_months_per_year: 2
+ self_manage: true
+ property_management_pct: 0.00
+ vacancy_months_per_year_base: 0.5
+ bad_debt_pct_of_gross_rent: 0.005
+ leasing_fee_pct_of_annual_rent: 0.05
+ turnover_cost_per_event: 2500
+ turnover_frequency_months: 24
+ routine_maintenance_pct_of_rent: 0.05
+ maintenance_inflation_annual_pct: 0.03
+
+ # Ownership cost growth (per-bucket)
+ current_home_tax_growth_annual_pct: 0.03
+ current_home_insurance_growth_annual_pct: 0.05
+ current_home_hoa_growth_annual_pct: 0.03
+ current_home_misc_growth_annual_pct: 0.03
+
+ # Exit friction (new)
+ current_home_sell_cost_pct_future: 0.07
+ sale_prep_cost_flat: 3000
+ pre_sale_vacancy_months: 0.5
+ concession_pct_at_sale: 0.00
+
+ Sell-case reinvestment + tax defaults (stored in the run, not the profile):
+ invest_monthly_sell_savings: true
+ monthly_savings_reinvestment_return_annual_pct: 0.04
+ invest_initial_sale_surplus_cash: false
+ surplus_cash_return_annual_pct: 0.04
+ release_suspended_losses_on_taxable_disposition: true
+
+ New-home drag defaults (stored in the run):
+ new_home_maintenance_pct_of_home_value_annual: 0.01
+ new_home_tax_growth_annual_pct: 0.03
+ new_home_insurance_growth_annual_pct: 0.05
+ new_home_hoa_growth_annual_pct: 0.03
+
+ These are starter assumptions, not recommendations — every field is editable and the UI labels them as starting points.
+
+ Seeding is explicit, not a side effect of GET. Options chosen: the Alembic migration inserts the starter profile directly in the upgrade() step via op.bulk_insert(current_home_profile_table, [{...}]). GET
+ /current-home-profiles is a pure read — it returns [] if the user has deleted everything, and the UI shows a "Create starter profile" button that calls POST /current-home-profiles/bootstrap-default. The bootstrap
+ endpoint inserts the same defaults. No writes on GET.
+
+ Assumption Model (canonical input contract)
+
+ RentVsSellInputs is a nested dict with these top-level groups. Every field has a starter default so first-load compute works without any user entry.
+
+ Group 1: Current Home (core)
+
+ value_today, basis, loan_balance, mortgage_rate,
+
+ # Monthly carrying costs split explicitly (no more PITI lump)
+ monthly_principal_interest     # derived from mortgage_schedule if not entered
+ monthly_taxes                  # explicit — drives tax-growth + deductibles
+ monthly_insurance              # explicit — bumped on rental conversion below
+ monthly_hoa
+ monthly_misc_owner_paid        # HOA extras, utilities, sewer/trash — user-entered
+
+ # Rental conversion adjustments
+ insurance_conversion_bump_pct  # default 0.15 — landlord policy costs more than owner-occupied
+ initial_lease_up_vacancy_months # default 1.0 — vacancy before the first tenant lands
+
+ # Core sale + rent
+ sell_cost_pct_now, monthly_rent_base,
+ land_pct, building_pct, move_out_month, rent_start_month
+
+ Rule: monthly_piti as a single number is no longer used in any formula. The tax model reads monthly_taxes and monthly_insurance explicitly; the ownership-cost-growth paths apply to each bucket independently;
+ monthly_misc_owner_paid flows into cash-flow math and grows at current_home_misc_growth_annual_pct. On rental conversion, starting monthly_insurance is multiplied by (1 + insurance_conversion_bump_pct) for every month
+ the home is in rental use.
+
+ Group 2: New Home (core)
+
+ purchase_price, base_down_pct, purchase_date, initial_rate,
+ loan_term_years, monthly_hoa, monthly_taxes, monthly_insurance
+
+ Group 3: Market Assumptions (growth paths)
+
+ total_value_change_5y, total_value_change_10y,
+ total_rent_change_5y, total_rent_change_10y
+
+ Group 4: Rental Operations (landlord drag — new)
+
+ Previously collapsed into a single "reserve months" number; now explicit.
+ reserve_months_per_year             # kept for stress-testing
+ self_manage                         # bool
+ property_management_pct             # 0 if self_manage, else 8% default
+ vacancy_months_per_year_base        # default 0.5
+ bad_debt_pct_of_gross_rent          # default 0.005
+ leasing_fee_pct_of_annual_rent      # default 0.05
+ turnover_cost_per_event             # default 2500
+ turnover_frequency_months           # default 24
+ routine_maintenance_pct_of_rent     # default 0.05
+ maintenance_inflation_annual_pct    # default 0.03
+
+ Group 5: Capex (explicit one-time events — new)
+
+ current_home_capex_items: list[CapexItem]
+ new_home_capex_items: list[CapexItem]
+ Where each CapexItem = { name, amount, month_offset, recurring_months|None, applies_to, tax_treatment } with tax_treatment ∈ {capitalize, expense, ignore_for_tax_model}. Starter UI offers a seed list the user can
+ enable/disable: HVAC, water heater, paint/flooring refresh, appliances, roof (optional).
+
+ Group 6: Ownership Cost Growth (new — matters most in 10Y)
+
+ current_home_tax_growth_annual_pct        # default 0.03
+ current_home_insurance_growth_annual_pct  # default 0.05
+ current_home_hoa_growth_annual_pct        # default 0.03
+ current_home_misc_growth_annual_pct       # default 0.03
+ new_home_tax_growth_annual_pct            # default 0.03
+ new_home_insurance_growth_annual_pct      # default 0.05
+ new_home_hoa_growth_annual_pct            # default 0.03
+ Each path is an independent monthly_owner_cost_path so taxes and insurance can drift at different rates over the horizon.
+
+ Group 7: Exit Friction (new — sell-now and sell-later are not the same)
+
+ current_home_sell_cost_pct_future         # default 0.07 (may differ from _now)
+ sale_prep_cost_flat                       # default 3000
+ pre_sale_vacancy_months                   # default 0.5
+ concession_pct_at_sale                    # default 0.00
+
+ Group 8: Sell-Case Reinvestment (new — fairness for 10Y)
+
+ invest_monthly_sell_savings                       # default true
+ monthly_savings_reinvestment_return_annual_pct    # default 0.04
+ invest_initial_sale_surplus_cash                  # default false
+ surplus_cash_return_annual_pct                    # default 0.04
+ The sell case has lower monthly carrying cost than the keep case. Those monthly savings, left as cash under the mattress, understate the sell case over 10 years. Modeling them as an optional reinvested stream is the
+ fairness fix.
+
+ Group 9: New-Home Drag (new)
+
+ new_home_maintenance_pct_of_home_value_annual   # default 0.01
+ Default low, but present so long-horizon comparisons are fair across strategies. Capex items (above) can also target applies_to: new_home | both.
+
+ Group 10: Refinance (core)
+
+ enabled, year3_rate, year5_rate, year7_rate,
+ cost_pct (default 0.015), selected_path ∈ {none, year3, year5, year7}
+
+ Group 11: Taxes (core)
+
+ filing_status, federal_ordinary_rate, federal_ltcg_rate,
+ virginia_rate, niit_enabled, niit_rate,
+ section_121_mfj (default 500000), depreciation_recovery_rate (default 0.25),
+ release_suspended_losses_on_taxable_disposition  # default true
+
+ Suspended passive loss rule (simplified): at any rental year where taxable rental income is negative, the loss goes into suspended_loss_created (not current_tax_saved) because MAGI > $150k disables the $25k special
+ allowance. When the property is sold in a fully taxable disposition (sell_now if already converted, or rent_then_sell), if release_suspended_losses_on_taxable_disposition is true, the accumulated suspended balance is
+ released and offsets ordinary income in the year of sale — approximated as tax_benefit = suspended_loss_balance * (federal_ordinary_rate + virginia_rate). Disclaimer flag passive_loss_release_assumed is set whenever
+ this fires.
+
+ Group 12: Modeling (core)
+
+ horizon_years (5 or 10), rent_then_sell_date (default 2029-05)
+
+ Calculation Engine — src/pipa/analysis/rent_vs_sell.py
+
+ Pure functions only, no I/O. One file, flat structure. All dollar math in Python floats; display-layer rounding lives in JS.
+
+ Core primitives
+
+ def mortgage_schedule(principal, annual_rate, term_months) -> list[dict]
+     # [{month, payment, principal, interest, balance}, ...]
+     # Reuses formula from analysis.financial.calculate_monthly_payment.
+
+ def linear_growth_path(start, total_change_pct, months) -> list[float]
+     # value[m] = start * (1 + total_change_pct * (m / months)); length = months+1
+
+ def refi_schedule(original_schedule, refi_month, new_rate,
+                   new_term_months, refi_cost_pct) -> list[dict]
+     # Splice original[:refi_month] with new schedule from balance at refi_month.
+     # Refi cost is a one-time dollar hit at refi_month (tracked separately).
+
+ def compute_depreciation(adjusted_basis, building_pct,
+                          months_active, mid_month_convention=True) -> float
+     # depreciable = min(adjusted_basis, fmv_at_conversion) * building_pct
+     # annual = depreciable / 27.5; mid-month proration for first/last month.
+
+ def monthly_owner_cost_path(start_monthly_cost, annual_growth_pct, months) -> list[float]
+     # Compounding monthly growth of property tax / insurance / HOA over the horizon.
+
+ def vacancy_and_turnover_path(inputs, months, gross_rent_path) -> list[dict]
+     # Per-month: gross_rent, vacancy_loss, bad_debt_loss, leasing_fee,
+     # turnover_cost, collected_rent_after_losses. Turnover events spaced by
+     # turnover_frequency_months; leasing fee triggered on each turnover.
+
+ def maintenance_path(inputs, months, gross_rent_path) -> list[dict]
+     # Per-month: routine_maintenance (pct of rent, inflation-aware),
+     # explicit_capex_cash (from CapexItem schedule), deductible_portion.
+
+ def capex_events_for_horizon(capex_items, months, home_scope) -> list[dict]
+     # Expand [CapexItem] into a month-indexed list of cash events filtered
+     # by applies_to == home_scope ∈ {current_home, new_home}. Recurring
+     # items fire every `recurring_months` if set.
+
+ def reinvestment_path(monthly_cashflows, annual_return_pct) -> float
+     # Simple monthly compounding of a stream. Returns ending value.
+     # Used for sell-case reinvestment of monthly carrying-cost savings.
+
+ Strategy functions
+
+ Each takes the full RentVsSellInputs dict and horizon_months, returns a StrategyOutput:
+
+ def compute_sell_now(inputs, horizon_months) -> StrategyOutput
+ def compute_keep_rental(inputs, horizon_months) -> StrategyOutput
+ def compute_rent_then_sell(inputs) -> StrategyOutput   # sell_date drives horizon
+
+ Sell Now logic:
+ - Net cash proceeds = value_today * (1 - sell_cost_pct_now) - loan_balance - sale_prep_cost_flat
+ - Gain = value_today * (1 - sell_cost_pct_now) - basis; excluded under §121 MFJ up to $500k; taxable surplus at LTCG + VA + NIIT
+ - New-home down payment = base_down_pct * purchase_price + net_after_tax_proceeds (→ ~53.4%, NOT hardcoded 55%)
+ - New-home loan balance = purchase_price - down_payment; amortize over term; apply selected refi path
+ - New-home drag: monthly maintenance (new_home_maintenance_pct_of_home_value_annual / 12 * purchase_price) + any new_home capex events + cost growth on taxes/insurance/HOA
+ - Reinvestment (new): monthly carrying-cost savings vs the keep case (computed as keep-case new-home payment − sell-case new-home payment) feed through reinvestment_path(...) if invest_monthly_sell_savings is on. Any
+ surplus sale cash beyond the down payment also reinvests if invest_initial_sale_surplus_cash is on.
+ - Net worth at horizon = new-home equity + reinvested savings value + reinvested surplus cash value − refi costs − new-home maintenance drag − new-home capex
+
+ Keep Rental (horizon_months = 60 or 120):
+ - Current home: linear_growth_path(value_today, total_value_change_Xy, horizon_months); current mortgage continues on its own amortization schedule
+ - Rent path: linear_growth_path(monthly_rent_base, total_rent_change_Xy, horizon_months)
+ - Operating economics per month (new, expanded): collected_rent = gross_rent − vacancy_loss − bad_debt_loss − leasing_fee − turnover_cost, then pre_tax_cashflow = collected_rent − property_management_fee −
+ routine_maintenance − explicit_capex_cash − monthly_piti − monthly_hoa − owner_cost_growth_deltas
+ - Economic reserve per month = (monthly_rent_base * reserve_months_per_year) / 12, kept in a parallel stress column — NOT double-counted against explicit drag and NOT added to tax deductions
+ - Annual tax calc: taxable = collected_rent - mortgage_interest - property_tax - insurance - hoa - deductible_repairs - management_fee - leasing_fee - deductible capex portion - depreciation; tax at ordinary marginal +
+  VA + NIIT. Negative taxable → suspended_loss_created given >$150k MAGI phaseout (no immediate W-2 offset). Suspended losses may optionally be released at eventual sale (simplified approximation, flagged).
+ - New home: base 20% down only; amortize + refi path + new-home drag (maintenance + capex + cost growth)
+ - Ending net worth = current-home equity (future value × (1 − current_home_sell_cost_pct_future) − loan balance − hypothetical recapture line item) + new-home equity + cumulative after-tax rental cashflow − refi costs
+
+ Rent Then Sell (sell_date configurable, default 2029-05):
+ - Months rented = (sell_date - rent_start_month).months
+ - Same operating economics as Keep Rental over those months
+ - Pre-sale vacancy (pre_sale_vacancy_months) zeroes out rent collection in the final months before sale but carrying costs still apply
+ - Sale: gross_proceeds = future_value × (1 − current_home_sell_cost_pct_future) × (1 − concession_pct_at_sale) − sale_prep_cost_flat; then split gain:
+   - depreciation_recap_bucket = depreciation taken (mid-month convention), taxed at min(depreciation_recovery_rate, federal_ordinary_rate) + VA (not §121 excludable)
+   - taxable_cap_gain_bucket = remaining gain after §121 exclusion (applies if sell_date < move_out_month + 3yr so 2-of-5 test still passes)
+ - Warnings: §121 window closed (sell > move_out + 3yr); large capex within 12mo of sale; pre-sale vacancy materially changes outcome; future sell-cost > sell-now cost
+
+ Aggregator
+
+ def compute_full_analysis(inputs: RentVsSellInputs) -> FullAnalysisOutput:
+     # Runs all four strategies from the same inputs
+     # Returns a structured dict with explicit buckets (see contract below).
+
+ Engine output contract
+
+ Every strategy output carries structured tax buckets so the UI cannot overstate precision. Every comparison carries an explicit driver bridge so the user can answer "why did sell beat keep?".
+
+ @dataclass
+ class AnnualTaxModel:
+     taxable_rental_income: float       # after interest, prop tax, insurance, depreciation
+     depreciation_taken: float
+     suspended_loss_created: float      # losses not usable due to >$150k MAGI phaseout
+     suspended_loss_balance_end: float  # cumulative running balance at end of year
+     current_tax_paid: float            # federal ord + VA + optional NIIT
+     current_tax_saved: float           # from any usable deductions
+
+ @dataclass
+ class SaleTaxModel:
+     gross_gain: float
+     section_121_excluded_gain: float
+     depreciation_recap_bucket: float    # not excludable; up to 25% federal rate
+     taxable_cap_gain_bucket: float
+     estimated_sale_tax: float
+     suspended_loss_used_at_sale: float  # offset against ordinary income, 0 if toggle off
+     suspended_loss_remainder: float     # any balance left unused after sale
+     suspended_loss_tax_benefit: float   # dollar benefit from the release
+
+ @dataclass
+ class RentalOperationsModel:          # new
+     gross_rent: float
+     vacancy_loss: float
+     bad_debt_loss: float
+     leasing_fee: float
+     turnover_cost: float
+     management_fee: float
+     collected_rent: float
+
+ @dataclass
+ class MaintenanceCapexModel:          # new
+     routine_maintenance: float
+     explicit_capex_total: float
+     explicit_capex_events: list[dict]   # [{month, amount, name}]
+     sale_prep_cost: float
+     pre_sale_vacancy_cost: float
+
+ @dataclass
+ class ReinvestmentModel:              # new — sell case only
+     monthly_savings_invested: float     # cumulative contributions
+     surplus_cash_invested: float
+     ending_investment_value: float      # after compounding
+
+ @dataclass
+ class StrategyDriverBridge:            # expanded — 17+ buckets that must sum to net delta
+     trapped_equity_redeployment_benefit: float
+     extra_new_home_interest_cost: float
+     rental_cashflow_after_tax: float
+     vacancy_and_bad_debt_drag: float           # new
+     leasing_and_turnover_drag: float           # new
+     property_management_drag: float            # new
+     routine_maintenance_drag: float            # new
+     capex_drag_current_home: float             # new
+     capex_drag_new_home: float                 # new
+     current_home_appreciation_effect: float
+     current_home_principal_paydown: float
+     ownership_cost_growth_effect: float        # new
+     sale_tax_difference: float
+     future_sale_friction_difference: float     # new — sell-now vs sell-later cost stack
+     reinvestment_benefit_sell_case: float      # new — monthly-savings compounding
+     refi_effect: float
+     reserve_drag: float
+     residual_other: float
+
+ @dataclass
+ class StrategyOutput:
+     name: str
+     net_worth_end: float
+     monthly_stress: float                              # monthly carry under this strategy
+     monthly_stress_delta_vs_sell: float
+     annual_tax_model: list[AnnualTaxModel]              # per-year
+     rental_ops_model: list[RentalOperationsModel] | None  # per-year, keep + rent-then-sell only
+     maintenance_capex_model: list[MaintenanceCapexModel] | None
+     reinvestment_model: ReinvestmentModel | None        # sell_now only (non-None when enabled)
+     sale_tax_model: SaleTaxModel | None                 # strategies that actually sell
+     driver_bridge_vs_sell: StrategyDriverBridge | None  # null for sell_now itself
+     tax_disclaimer_flags: list[str]
+     warnings: list[str]
+
+ @dataclass
+ class FullAnalysisOutput:
+     strategies: dict[str, StrategyOutput]   # keyed by strategy name
+     top_line: dict                          # trapped_equity, extra_new_home_loan,
+                                             # net_interest_drag_monthly, monthly_stress_delta,
+                                             # required_appreciation_to_breakeven_5y,
+                                             # required_appreciation_to_breakeven_10y,
+                                             # section_121_window_status
+     lean: str                               # leans_sell / leans_keep / too_close
+     calc_version: str
+     input_schema_version: str
+
+ Top-line metric definitions (must match exactly):
+ - trapped_equity = value_today * (1 - sell_cost_pct) - loan_balance
+ - extra_new_home_loan = keep-case new-home loan − sell-case new-home loan
+ - net_interest_drag_monthly = (extra_new_home_interest_month_1) - (current_home_interest_month_1) — defined at month 1 with disclaimer that it evolves over time; the drive-to-zero narrative lives in the driver bridge,
+ not here
+ - required_appreciation_to_breakeven_Xy = solve total_value_change_pct where keep_strategy.net_worth_end == sell_now.net_worth_end via bisection, up to ±30% bracket
+ - section_121_window_status = "open" if sell_date < move_out_month + 3yr, "closing YYYY-MM" if within the next 12 months, "closed" otherwise
+ - lean threshold: |delta_5y| < $25k → too_close; else winner of keep_5y vs sell_now at the default lens
+
+ Sensitivity grid — preset-driven (not free-form in V1)
+
+ def compute_sensitivity_grid(inputs, preset, comparator, horizon, refi_path) -> SensitivityGrid:
+     # preset ∈ {
+     #   "value_x_rent",            # default — current-home value vs rent change
+     #   "value_x_capex",           # value change vs one-time capex shock
+     #   "value_x_refi",            # value change vs refi path (Y3/Y5/Y7/none)
+     #   "rent_x_vacancy",          # rent change vs vacancy/turnover drag
+     #   "rent_x_reinvest_return",  # rent change vs sell-case reinvestment return
+     # }
+     # Each preset runs an 11x11 (or 11x4 for refi) grid, cloning inputs per cell,
+     # recomputing the two strategies named by `comparator`, and returning
+     # {delta, winner, magnitude} per cell plus row/column labels.
+
+ Presets keep V1 bounded. Each grid is at most 121 cells × O(horizon_months). A full grid cold-computes in ~100–200ms. The endpoint also returns three derived breakeven metrics computed via bisection against the current
+  baseline:
+ breakeven_rent_change_pct
+ breakeven_value_change_pct
+ breakeven_capex_shock_dollars
+ These are the "crossover line" numbers the heatmap ships alongside the grid.
+
+ Known-answer + golden-fixture tests
+
+ Write tests/test_rent_vs_sell_engine.py:
+
+ Unit primitives:
+ - test_mortgage_schedule_amortizes_to_zero
+ - test_linear_growth_path_endpoints — path[60] ≈ start * 1.10 at +10% over 60
+ - test_refi_schedule_splices_cleanly_at_month_60 — balance matches; payment drops
+ - test_depreciation_mid_month_proration_first_and_last_month
+ - test_vacancy_reduces_collected_rent_but_not_contract_rent_path — gross rent path unchanged; collected_rent reduced
+ - test_turnover_fee_hits_on_expected_schedule — turnover every 24 months; leasing fee triggered on each
+ - test_capex_event_hits_correct_month_and_strategy — applies_to filter works; recurring expands correctly
+ - test_monthly_owner_cost_path_compounds_properly
+ - test_reinvestment_path_monthly_compounding
+
+ Strategy sanity:
+ - test_sell_now_down_payment_lands_near_53_4_pct (±0.5%)
+ - test_section_121_fully_shields_base_case → sale_tax_model.estimated_sale_tax == 0
+ - test_keep_rental_produces_positive_rental_cashflow at base drag
+ - test_rent_then_sell_default_sell_may_2029_uses_correct_depreciation_window
+ - test_all_four_strategies_run_from_single_input
+ - test_passive_loss_suspended_when_magi_above_150k → into suspended_loss_created
+ - test_future_sell_cost_diff_changes_rent_then_sell_outcome
+ - test_sell_case_reinvestment_improves_10y_net_worth — when invest_monthly_sell_savings flips on
+ - test_new_home_maintenance_affects_all_strategies_consistently
+ - test_bad_debt_and_vacancy_together_can_flip_keep_from_positive_to_negative
+ - test_driver_bridge_sums_within_50_dollars_of_net_delta — sum(bridge buckets) == (keep.net_worth_end - sell.net_worth_end) ±$50, residual absorbed in residual_other
+ - test_driver_bridge_includes_capex_and_turnover_buckets — non-zero when those inputs are set
+ - test_current_home_tax_and_insurance_growth_use_explicit_inputs — growth path applies to monthly_taxes/monthly_insurance directly, not to a derived PITI lump
+ - test_initial_lease_up_vacancy_reduces_first_year_collected_rent — first-year collected_rent drops by initial_lease_up_vacancy_months * base_rent
+ - test_misc_owner_paid_costs_reduce_keep_strategy_net_worth — flipping monthly_misc_owner_paid from 0 → 200 drops keep NW by ~$200×horizon_months (minus tax effects)
+ - test_suspended_loss_release_toggle_changes_sale_outcome — with toggle on, suspended_loss_used_at_sale > 0; with toggle off, == 0 and final NW is lower
+ - test_landlord_insurance_conversion_bump_changes_first_year_taxable_income — first year taxable_rental_income drops by ~12 × starting_insurance × bump_pct
+
+ Golden fixtures — JSON in tests/fixtures/rent_vs_sell/:
+ - base_case.json — starter profile + $1.315M new home + no refi + base tax + default drag
+ - recession_case.json — value_change_5y=−10%, rent_change_5y=−10%
+ - refi_year5_case.json — base + Y5 refi @ 4.75%
+ - capex_shock_case.json — $30k HVAC at month 18, $8k water heater at month 30
+ - turnover_heavy_case.json — 12-month turnover frequency + 1.5 vacancy months
+ - sell_reinvestment_case.json — sell-case with invest_monthly_sell_savings=true @ 4% return
+
+ Tests:
+ - test_base_case_summary_matches_fixture — top_line + per-strategy net_worth_end match JSON (±$100)
+ - test_recession_case_heatmap_center_cell_matches_fixture
+ - test_refi_year5_changes_payment_exactly_at_month_60 — new_home_schedule[59].payment != schedule[60].payment
+ - test_section_121_boundary_open_vs_closed — move_out=2026-05, sell=2031-04 open, sell=2031-06 closed
+ - test_heatmap_preset_value_vs_capex_returns_expected_shape — grid dims + breakeven_capex_shock_dollars computed
+
+ Fixtures generated once via python -m pipa.analysis.rent_vs_sell --emit-fixture base_case and committed. Engine formula changes bump CALC_VERSION and regenerate fixtures; mismatches fail loudly.
+
+ API Routes — src/pipa/api/v1/rent_vs_sell.py
+
+ POST   /api/v1/rent-vs-sell/calculate                        → FullAnalysisOutput
+ POST   /api/v1/rent-vs-sell/sensitivity                      → SensitivityGrid (request-hash cached)
+ GET    /api/v1/rent-vs-sell/prefill/{property_id}            → partial inputs (Property + ListingData + County)
+
+ GET    /api/v1/rent-vs-sell/current-home-profiles            → list (pure read, no side effects)
+ POST   /api/v1/rent-vs-sell/current-home-profiles            → create
+ PUT    /api/v1/rent-vs-sell/current-home-profiles/{id}       → update
+ DELETE /api/v1/rent-vs-sell/current-home-profiles/{id}       → delete
+ POST   /api/v1/rent-vs-sell/current-home-profiles/bootstrap-default  → inserts White Cap Ter starter
+
+ GET    /api/v1/rent-vs-sell/runs                             → list (id/name/date/scenario_label/summary_json)
+ GET    /api/v1/rent-vs-sell/runs/{id}                        → full assumptions + outputs; recomputes if stale
+ POST   /api/v1/rent-vs-sell/runs                             → save; snapshots property + profile
+ PUT    /api/v1/rent-vs-sell/runs/{id}                        → update
+ DELETE /api/v1/rent-vs-sell/runs/{id}                        → delete
+ POST   /api/v1/rent-vs-sell/runs/{id}/duplicate              → clone with new name
+ POST   /api/v1/rent-vs-sell/runs/compare                     → body: {run_ids: [a, b, c]} → side-by-side diff
+
+ Prefill endpoint reads listing_data (price, HOA, taxes, insurance) and county_data (assessed value, tax history) and returns a partial NewHomeInputs dict + a source_prefill_version string so saved runs can track where
+ their numbers came from.
+
+ Sensitivity caching: the endpoint computes sha1(json.dumps({subset_of_assumptions, horizon, refi_path, comparator, metric}, sort_keys=True)) and uses it as a key in an in-memory LRU (maxsize=64). Cache lives on the app
+  state, not per-request. Cold computes take ~100–200ms for an 11×11 grid; cache hits are free. The LRU is fine for single-user PIPA; no Redis needed.
+
+ Save-time snapshotting: POST /runs and PUT /runs/{id} both snapshot:
+ - target_property_snapshot_json — from the referenced property's current listing data (price, HOA, taxes, assessed value)
+ - current_home_snapshot_json — from the referenced current-home profile's config_json
+ - source_prefill_version — from the prefill response if the inputs came from one
+
+ Stale recomputation: GET /runs/{id} checks stored.calc_version != CALC_VERSION. If mismatched, recompute → update in place → return with recomputed: true.
+
+ Frontend — src/pipa/static/js/views/rent_vs_sell/
+
+ Router wiring (app.js)
+
+ import * as rentVsSellView from './views/rent_vs_sell/index.js';
+
+ initRouter({
+     // ... existing routes
+     'rent-vs-sell': (params, query) => rentVsSellView.load(appEl(), query),
+ });
+ Query params: new_home_property_id (property to prefill), run_id (load a saved run).
+
+ Nav entry (index.html)
+
+ <a href="#rent-vs-sell" data-route="rent-vs-sell" class="nav-link">Rent vs Sell</a>
+ Add Chart.js CDN once:
+ <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+ Property-detail launch button (views/detail/header.js)
+
+ Add a compact button to the existing action button group:
+ ${btn('action-rent-vs-sell', 'Rent vs Sell', 'Analyze as your next home')}
+ And in the click handler, navigate:
+ window.location.hash = `#rent-vs-sell?new_home_property_id=${encodeURIComponent(propertyId)}`;
+
+ Analysis page layout (rent_vs_sell/index.js)
+
+ ┌──────────────────────────────────────────────────────────────┐
+ │ HEADER: [Run name] [Scenario ▾] [Save] [Duplicate] [Compare] │
+ │         target property pill (if set) [Clear]                │
+ ├──────────────────────────────────────────────────────────────┤
+ │ DEFAULT LENS TABS: [ 5Y ] [ 10Y ] [ Rent-Then-Sell ]         │
+ │ (Active lens drives which cards/charts emphasize which data) │
+ ├──────────────────────────────────────────────────────────────┤
+ │ TOP-LINE METRICS (6 cards, lens-aware)                        │
+ │ Lean | Monthly Stress Δ | Net Interest Drag | Lens NW Winner │
+ │ Breakeven Appreciation | §121 Window Status                   │
+ ├──────────────────────────────────────────────────────────────┤
+ │ STRATEGY COMPARISON TABLE (4 rows × N cols)                   │
+ │ Strategy | Monthly Stress | 5Y NW | 10Y NW | Tax at Sale      │
+ │ (Active lens column highlighted)                              │
+ ├──────────────────────────────────────────────────────────────┤
+ │ LANDLORD DRAG SUMMARY (lens-aware, keep + rent-then-sell only)│
+ │ Vacancy+bad debt | Leasing+turnover | Mgmt fee | Routine maint│
+ │ Capex (current) | Capex (new) | Total drag over lens          │
+ ├──────────────────────────────────────────────────────────────┤
+ │ DRIVER BRIDGE (strategy-specific, 17+ buckets)                │
+ │ "Why did [winner] beat [loser]?" — waterfall                  │
+ │ Dropdown: Sell vs Keep 5Y / Sell vs Keep 10Y / Sell vs RTS   │
+ ├──────────────────────────────────────────────────────────────┤
+ │ CHARTS (2)                                                     │
+ │ Net Worth Over Time | Monthly Cash Flow                       │
+ ├──────────────────────────────────────────────────────────────┤
+ │ SENSITIVITY HEATMAP                                            │
+ │ [preset ▾] [horizon ▾] [refi ▾] [comparator ▾] [Refresh]     │
+ │ Presets: value×rent, value×capex, value×refi, rent×vacancy,  │
+ │          rent×reinvest. USER-TRIGGERED refresh only.          │
+ │ Footer: breakeven rent / value / capex numbers                │
+ ├──────────────────────────────────────────────────────────────┤
+ │ ASSUMPTIONS (4 collapsible cards, edit-in-place)              │
+ │ ▼ Current Home — value/basis/loan + split PI/tax/ins/HOA/misc │
+ │   + insurance-conversion bump + lease-up vacancy + mgmt +     │
+ │   vacancy/turnover/maintenance + rental rate                  │
+ │ ▼ New Home — core + maintenance % + growth defaults + capex   │
+ │ ▼ Market Assumptions — value/rent paths, per-bucket cost      │
+ │   growth (tax/ins/hoa/misc), future sell cost, capex presets  │
+ │ ▼ Advanced — refi, tax, suspended-loss release toggle,        │
+ │   reinvestment, sale prep/pre-sale vacancy                    │
+ ├──────────────────────────────────────────────────────────────┤
+ │ SAVED RUNS SIDEBAR (right drawer — list only)                 │
+ │ Click to load. Checkbox marks runs for compare.               │
+ │ "Compare selected" button → navigates to compare page         │
+ └──────────────────────────────────────────────────────────────┘
+
+ Compute behavior (critical):
+ - /calculate runs on input changes with 300ms debounce — cheap (<50ms server-side)
+ - /sensitivity does NOT run on input edits. It runs only when:
+   a. user clicks "Refresh Heatmap"
+   b. user changes a heatmap control (horizon / refi / comparator / metric)
+   c. user stops editing inputs for 1500ms AND the heatmap panel is visible AND a cached hash doesn't already match
+ - The heatmap shows a "⚠ Stale — refresh to update" banner when inputs have changed since the last computed grid
+ - Frontend caches results in-memory keyed by request hash; Refresh Heatmap force-bypasses cache
+
+ State management: module-local _state = { inputs, outputs, savedRuns, activeLens, heatmapCache, heatmapStale }. On load, reads query params (new_home_property_id, run_id), fetches prefill or saved run, seeds inputs,
+ triggers first /calculate. Heatmap is NOT auto-fetched on page load — the panel shows a "Load heatmap" button until clicked.
+
+ Section-level buttons inside collapsible card headers use event.stopPropagation() to match existing PIPA collapsible behavior.
+
+ Compare page layout (rent_vs_sell/compare.js)
+
+ Dedicated route: #rent-vs-sell/compare?ids=a,b,c. Supports 2–4 runs.
+
+ ┌──────────────────────────────────────────────────────────────┐
+ │ HEADER: "Comparing 3 runs"  [← Back to analysis]             │
+ ├──────────────────────────────────────────────────────────────┤
+ │ RUN IDENTITY ROW (one column per run)                         │
+ │ Name | Scenario | Created | Target Property | §121 Status    │
+ ├──────────────────────────────────────────────────────────────┤
+ │ ASSUMPTION DIFFS                                              │
+ │ Rows = key assumptions (value_today, rent_base, refi_path,   │
+ │        total_value_change, etc.)                              │
+ │ Cells differing from the first column highlighted amber       │
+ ├──────────────────────────────────────────────────────────────┤
+ │ OUTPUT DIFFS                                                  │
+ │ Rows = 5Y NW by strategy, 10Y NW by strategy,                │
+ │        Monthly Stress Δ, Net Interest Drag, Lean              │
+ │ Winner column highlighted green; loser red                    │
+ └──────────────────────────────────────────────────────────────┘
+
+ Compare page does not allow editing. Click a column header to navigate back to that run's analysis page. Fetches all runs via POST /runs/compare with the id list.
+
+ Warning badges
+
+ Render amber/red badges on specific cards when:
+ - Sell proceeds are negative or tiny
+ - Rental cashflow negative (before or after tax)
+ - §121 exclusion window closing within the horizon
+ - Depreciation recapture > $20k at horizon
+ - Rent-then-sell date past §121 favorable window
+ - Suspended passive losses accruing (not offsetting W-2 immediately)
+ - High capex concentration in first 24 months (> $20k)
+ - Multiple large capex events (>2) within 12 months of a planned sale
+ - High vacancy + turnover combination making rent-growth assumptions misleading
+ - New-home maintenance omitted entirely in 10Y mode (flag if new_home_maintenance_pct == 0)
+ - Sell-case reinvestment disabled in 10Y mode (flag the fairness gap)
+ - Future sale friction materially larger than sell-now friction (sell_cost_pct_future > sell_cost_pct_now + 1pp)
+
+ Chart.js usage
+
+ // charts.js exports:
+ export function drawNetWorthChart(canvasEl, strategies, horizonMonths) { ... }
+ export function drawCashFlowChart(canvasEl, strategies, horizonMonths) { ... }
+ export function drawDriverBridge(canvasEl, bridge, comparisonLabel) { ... }
+ All destroy prior chart instances (stored on the canvas element .chartInstance) before redrawing. No React-like lifecycle needed.
+
+ The driver bridge chart is a horizontal waterfall that renders a single StrategyDriverBridge dict. The comparison is user-selectable from a dropdown: "Sell vs Keep 5Y", "Sell vs Keep 10Y", "Sell vs Rent-Then-Sell".
+
+ Reusable Pieces (with file paths)
+
+ ┌───────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────┐
+ │                         Existing code                         │                                Purpose                                │                             Where                              │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ calculate_monthly_payment(principal, annual_rate, term_years) │ Standard amortization formula — call from new mortgage_schedule       │ src/pipa/analysis/financial.py:28                              │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ generate_amortization_schedule(scenario, list_price)          │ Reference impl for the per-month schedule shape                       │ src/pipa/analysis/financial.py:121                             │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ analyze_capital_gains(...)                                    │ Section 121 $500k MFJ cap + 15% LTCG logic to mirror                  │ src/pipa/analysis/tax.py:42                                    │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ analyze_rental_income(...)                                    │ Depreciation 27.5yr pattern to mirror (but ours uses min(basis, FMV)) │ src/pipa/analysis/tax.py:96                                    │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ renderBadge(text, variant, size)                              │ Warning badges                                                        │ src/pipa/static/js/components/badge.js                         │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ renderMetricCard(label, value)                                │ Top-line metric cards                                                 │ src/pipa/static/js/components/metric-card.js                   │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ renderActionButton(id, label, variant, disabled, loading)     │ Save/Duplicate/Compare buttons                                        │ src/pipa/static/js/components/action-button.js                 │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ showToast()                                                   │ Success/error after save                                              │ src/pipa/static/js/toast.js                                    │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ formatCurrency(), formatDate(), formatNumber()                │ Display formatting                                                    │ src/pipa/static/js/utils.js                                    │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ Base, UUIDMixin, TimestampMixin                               │ SQLAlchemy base + mixins for new models                               │ src/pipa/models/base.py                                        │
+ ├───────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+ │ Alembic migration shape                                       │ Imports + op.create_table + sa.Column conventions                     │ alembic/versions/ed2ac2045645_add_app_setting_table_for_spa.py │
+ └───────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────┘
+
+ Implementation Order (revised phasing)
+
+ Phase 1 — Engine + full economics + single analysis page
+
+ Goal: correct numbers end-to-end including landlord drag, capex, and reinvestment (not deferred to polish). Manually editable, property prefill working.
+ 1. models/rent_vs_sell.py — both tables with versioning fields
+ 2. Alembic migration — both tables + op.bulk_insert starter profile + all drag/growth defaults
+ 3. analysis/rent_vs_sell.py — core primitives (mortgage, growth, refi, depreciation) + CALC_VERSION
+ 4. analysis/rent_vs_sell.py — expanded primitives (vacancy_and_turnover_path, maintenance_path, capex_events_for_horizon, monthly_owner_cost_path, reinvestment_path)
+ 5. analysis/rent_vs_sell.py — four strategies with full drag + reinvestment + exit friction
+ 6. analysis/rent_vs_sell.py — aggregator + driver bridge (17-bucket version)
+ 7. tests/test_rent_vs_sell_engine.py — primitives + drag primitives + strategy sanity
+ 8. tests/fixtures/rent_vs_sell/*.json — 6 golden fixtures incl. capex_shock / turnover_heavy / sell_reinvestment; fixture tests
+ 9. schemas/rent_vs_sell.py — Pydantic models with all assumption groups + expanded output buckets
+ 10. api/v1/rent_vs_sell.py — routes: /calculate, /prefill/{id}, profiles CRUD, /bootstrap-default
+ 11. api/app.py + models/__init__.py — wiring
+ 12. index.html — Chart.js CDN + nav link
+ 13. api.js — helpers for shipped endpoints
+ 14. views/rent_vs_sell/index.js — analysis page coordinator (no saved runs yet)
+ 15. views/rent_vs_sell/inputs.js — 4 cards with all drag fields
+ 16. views/rent_vs_sell/results.js — top-line metrics + strategy comparison + lens tabs + landlord drag summary
+ 17. views/rent_vs_sell/charts.js — net-worth + cash-flow
+ 18. app.js — register 'rent-vs-sell' route
+ 19. views/detail/header.js — "Rent vs Sell" button; ?new_home_property_id=
+ 20. Manual test: prefill → edit drag fields → compute → lens switch → verify landlord drag summary updates
+
+ Phase 2 — Saved runs + stale handling + driver bridge UI + warnings
+
+ Goal: save/load/duplicate runs; UI explains why one strategy wins.
+ 21. Add /runs CRUD routes + POST /runs/compare + snapshot logic
+ 22. Add stale-version detection + recomputation on GET
+ 23. views/rent_vs_sell/runs.js — saved runs sidebar drawer
+ 24. Extend results.js — driver bridge waterfall chart + dropdown
+ 25. All warning badges (landlord drag, §121, suspended losses, capex concentration, reinvestment gap)
+ 26. "Refreshed from new engine" toast when stale runs load
+
+ Phase 3 — Heatmap presets + compare page + polish
+
+ Goal: decision-grade tooling.
+ 27. /sensitivity endpoint (preset-driven) + in-memory LRU cache + breakeven metrics
+ 28. views/rent_vs_sell/sensitivity.js — preset-driven heatmap with toggles + stale banner + breakeven footer
+ 29. views/rent_vs_sell/compare.js — dedicated compare page + route #rent-vs-sell/compare?ids=...
+ 30. Formula notes / "planning math, not tax advice" disclaimer panel
+ 31. Final manual QA against every golden fixture
+
+ Design Rules (non-negotiable)
+
+ 1. One assumption set → all four strategies. Strategies are rows in the output; scenarios are named assumption sets.
+ 2. Sell case uses base down % + net sale proceeds, never hardcoded 55%. Must land near 53.4% with defaults.
+ 3. Growth inputs are total horizon changes (−10% to +10%), spread linearly over months. Not annual CAGR.
+ 4. Economic reserve ≠ tax deductions. Parallel tracks. Reserve for stress-testing; tax model uses actual deductible expenses + depreciation.
+ 5. Section 121 with depreciation-recapture explicit. Recapture bucket (25% max rate) shown as its own line.
+ 6. Planning math, not tax advice. Disclaimer visible on the page.
+ 7. Calculations live in Python. JS only collects, requests, renders.
+ 8. Property-detail launch is primary. Standalone nav entry is secondary but supported.
+ 9. assumptions_json is the source of truth. outputs_json is a cached snapshot, recomputed when calc_version changes.
+ 10. Heatmap is user-triggered, never auto-recomputed on keystrokes. Stale banner communicates when the grid no longer matches the inputs.
+ 11. Compare runs is a dedicated page, not a drawer feature.
+ 12. Save-time snapshots freeze provenance — listing data refreshes don't silently change what an old run "means."
+ 13. Landlord drag is modeled explicitly, not hidden inside a single reserve number. Vacancy, bad debt, leasing, turnover, management, routine maintenance, and explicit capex each have their own line in the operating
+ model and their own bucket in the driver bridge.
+ 14. Sell-case reinvestment is first-class, not an afterthought. Otherwise the sell case is silently penalized in long horizons.
+ 15. Exit friction is separate for sell-now vs sell-later. Sell-cost %, sale prep cost, pre-sale vacancy, and concessions can differ between the two paths.
+
+ Verification
+
+ Phase 1 done-when
+
+ 1. pytest -x tests/test_rent_vs_sell_engine.py — all primitive + strategy + golden-fixture tests pass
+ 2. python -m uvicorn pipa.api.app:app --port 8000 --reload starts clean
+ 3. After alembic upgrade head, the starter White Cap Ter profile exists in current_home_profile
+ 4. Load http://localhost:8000/#rent-vs-sell → page renders with starter defaults; four strategies compute
+ 5. Sell-now down payment lands within ±0.5% of 53.4%
+ 6. Section 121 shields base-case gain to $0 sale tax
+ 7. Edit rent total change to −10% → all strategies rerender within 500ms
+ 8. Flip refi path to Y5 @ 4.75% → new-home payment changes exactly at month 60
+ 9. From property detail page, click "Rent vs Sell" button → analysis page opens with that property's price/HOA/taxes prefilled as New Home
+ 10. Lens tabs work: [5Y][10Y][Rent-Then-Sell] swap the emphasized column
+
+ Phase 2 done-when
+
+ 11. Save as "Base Case"; duplicate as "Recession"; change value change to −10%; confirm independent rows in DB
+ 12. Stored rows have target_property_snapshot_json and current_home_snapshot_json populated at save time
+ 13. Manually bump CALC_VERSION in source; reload a saved run → endpoint returns recomputed: true; UI shows the refresh toast
+ 14. Driver bridge waterfall shows 17+ explicit buckets and sums to the net delta within ±$50 residual (captured in residual_other)
+ 15. Rent-then-sell date → 2032-06 → §121 "closed" warning appears; sale_tax_model.depreciation_recap_bucket > 0
+ 16. Rental cashflow with large suspended loss → suspended_loss_created > 0 and the warning badge explains it's not offsetting W-2
+ 17. Add $30k HVAC capex at month 18 → maintenance_capex_model.explicit_capex_events includes it; keep_5y net worth drops accordingly; driver bridge capex_drag_current_home matches
+ 18. Flip invest_monthly_sell_savings off → sell-case 10Y net worth drops; warning "sell-case reinvestment disabled in 10Y mode" fires
+ 19. Set turnover_frequency_months=12 and vacancy=1.5 → landlord drag summary updates; keep strategy flips from positive to negative cashflow
+
+ Phase 3 done-when
+
+ 20. Click "Load heatmap" with default value_x_rent preset → 11×11 grid renders within ~300ms (cold)
+ 21. Switch preset to value_x_capex → new 11×11 grid renders; breakeven_capex_shock_dollars footer populated
+ 22. Switch preset to rent_x_vacancy → grid axes relabel; crossover band shifts
+ 23. Toggle horizon to 10Y → grid refreshes; winner band shifts visibly
+ 24. Edit an input → heatmap shows "⚠ Stale" banner until user clicks Refresh
+ 25. Second identical request hits LRU and returns instantly
+ 26. Check 2 runs → click "Compare selected" → #rent-vs-sell/compare?ids=a,b page renders with diff highlights
+ 27. No console errors end-to-end; all Chart.js instances are destroyed before redraw (verify with repeated edits that memory doesn't balloon)
