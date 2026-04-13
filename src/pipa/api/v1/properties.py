@@ -203,6 +203,15 @@ async def delete_property(property_id: str, db: AsyncSession = Depends(get_db)):
         except Exception:
             pass
 
+    # Manual component-year overrides live in app_setting (no FK to
+    # property), so the table loop above misses them. If a property_id
+    # is ever reused, surviving overrides would silently apply at rank
+    # 100 to the next property — the worst kind of ghost data.
+    await db.execute(
+        text("DELETE FROM app_setting WHERE key LIKE :k"),
+        {"k": f"component_override.{property_id}.%"},
+    )
+
     await db.delete(prop)
 
 

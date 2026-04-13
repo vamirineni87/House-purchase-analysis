@@ -278,11 +278,70 @@ export function render(state) {
     if (ld.cooling_fuel) {
         cells.push(metricCell('Cooling', ld.cooling_fuel, 'L'));
     }
-    if (ld.parking_total_spaces != null) {
-        cells.push(metricCell('Parking', String(ld.parking_total_spaces), 'L'));
+    // Garage: combine attached/covered/carport into one cell with a breakdown.
+    //
+    // Zillow's `covered_spaces` already includes attached garage stalls
+    // (it's the superset of "anything with a roof"). Adding attached and
+    // covered together would double-count. The right total is
+    // max(attached, covered) — covered is "attached + detached garage" —
+    // plus any carport (separate field).
+    const gAttached = ld.attached_garage_spaces;
+    const gCovered = ld.covered_spaces;
+    const gCarport = ld.carport_spaces;
+    const gUncovered = ld.uncovered_spaces;
+    const garageParts = [];
+    if (gAttached != null) garageParts.push(`${gAttached} attached`);
+    if (gCovered != null && gCovered !== gAttached) garageParts.push(`${gCovered} covered`);
+    if (gCarport != null) garageParts.push(`${gCarport} carport`);
+    if (garageParts.length > 0) {
+        const garageTotal = Math.max(gAttached || 0, gCovered || 0) + (gCarport || 0);
+        const display = garageParts.length === 1
+            ? garageParts[0]
+            : `${garageTotal} (${garageParts.join(' + ')})`;
+        cells.push(metricCell('Garage', display, 'L'));
     }
-    if (ld.attached_garage_spaces != null) {
-        cells.push(metricCell('Garage', String(ld.attached_garage_spaces), 'L'));
+    if (ld.parking_total_spaces != null) {
+        const uncov = gUncovered != null ? ` (+${gUncovered} uncov)` : '';
+        cells.push(metricCell('Parking Total', `${ld.parking_total_spaces}${uncov}`, 'L'));
+    }
+    if (Array.isArray(ld.parking_features) && ld.parking_features.length > 0) {
+        cells.push(metricCell('Parking Type', ld.parking_features.join(', '), 'L'));
+    }
+    if (ld.is_new_construction === true) {
+        cells.push(metricCell('New Const.', 'Yes', 'L'));
+    }
+    if (ld.property_subtype && ld.property_subtype !== ld.home_type_listing) {
+        cells.push(metricCell('Subtype', ld.property_subtype, 'L'));
+    }
+    if (ld.builder_name) {
+        cells.push(metricCell('Builder', ld.builder_name, 'L'));
+    }
+    if (ld.date_on_market) {
+        cells.push(metricCell('On Market', ld.date_on_market, 'L'));
+    }
+    if (ld.ownership_type) {
+        cells.push(metricCell('Ownership', ld.ownership_type, 'L'));
+    }
+    if (Array.isArray(ld.lot_features) && ld.lot_features.length > 0) {
+        cells.push(metricCell('Lot Features', ld.lot_features.join(', '), 'L'));
+    }
+    if (Array.isArray(ld.utilities) && ld.utilities.length > 0) {
+        cells.push(metricCell('Utilities', ld.utilities.join(', '), 'L'));
+    }
+    if (ld.electric) {
+        cells.push(metricCell('Electric', ld.electric, 'L'));
+    }
+    if (Array.isArray(ld.security_features) && ld.security_features.length > 0) {
+        cells.push(metricCell('Security', ld.security_features.join(', '), 'L'));
+    }
+    if (Array.isArray(ld.additional_structures) && ld.additional_structures.length > 0) {
+        cells.push(metricCell('Add. Structures', ld.additional_structures.join(', '), 'L'));
+    }
+    if (Array.isArray(ld.accessibility_features) && ld.accessibility_features.length > 0) {
+        cells.push(metricCell('Accessibility', ld.accessibility_features.join(', '), 'L'));
+    }
+    if (Array.isArray(ld.rooms) && ld.rooms.length > 0) {
+        cells.push(metricCell('Rooms', `${ld.rooms.length} listed`, 'L'));
     }
     if (ld.has_hoa && ld.hoa_name) {
         cells.push(metricCell('HOA Name', ld.hoa_name, 'L'));

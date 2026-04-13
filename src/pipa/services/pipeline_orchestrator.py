@@ -30,6 +30,7 @@ FULL_PIPELINE_TASKS = [
     "county_scrape",
     "permits",
     "school_lookup",
+    "comp_quick",          # cheap — immediate value band
     "ai_pass_1",
     "resolver",
     "financial",
@@ -38,6 +39,8 @@ FULL_PIPELINE_TASKS = [
     "offer",
     "stress",
     "warning_engine",
+    "comp_deep",           # slow (~1-2 min) — before ai_pass_2 so the
+                           # narrative can cite county-verified comps
     "ai_pass_2",
     "decision_packet",
 ]
@@ -457,6 +460,10 @@ class _ExecutionContext:
         # Intermediate results produced by earlier tasks, consumed by later ones
         self.ai_extracted: dict = {}
         self.canonical: dict = {}
+        # Per-field source provenance: {field_name: {"source": str, "rank": int}}.
+        # Kept OUT of canonical so json.dumps(canonical) consumers (e.g. Pass 2
+        # property_data) don't waste prompt tokens on _source_* metadata.
+        self.source_meta: dict = {}
         self.conflicts: list[dict] = []
         self.unknowns: list[str] = []
         self.math_results: dict = {}
@@ -569,9 +576,10 @@ async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     if not ctx.description and ctx.listing_data:
         ctx.description = ctx.listing_data.get("description", "")
 
-    if not ctx.description:
-        logger.info("AI Pass 1: no description text available")
-        return {"skipped": True, "reason": "no description text"}
+    # Note: we used to bail here when description was empty, but with
+    # permits feeding the components extractor we can still produce
+    # useful output from permit history alone. The permits loader
+    # below decides whether enough data exists to call Claude at all.
 
     from pipa.services.ai_extraction import extract_all_from_listing
 
@@ -635,10 +643,56 @@ async def _task_ai_pass_1(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     if ctx.county_data:
         county_summary = ctx.county_data.get("_summary", ctx.county_data)
 
+    # Load permits from DB so the components extractor can use county
+    # permit dates as authoritative install years (e.g. furnace 2016)
+    # instead of relying on vague listing language ("newer HVAC").
+    # The `permits` task in FULL_PIPELINE_TASKS runs before ai_pass_1
+    # so PermitRecord rows already exist by the time we get here.
+    #
+    # Constraints:
+    #  - Filter NULL issue_date — undated permits would otherwise eat the
+    #    top of the [:50] slice that the extractor takes after sort, and
+    #    the AI prompt would show empty dates that produce low-confidence
+    #    guesses. The whole point of permits is the install year.
+    #  - LIMIT 50 in SQL, not in the extractor — bounds memory regardless
+    #    of how many permits a parcel has accumulated (Loudoun parcels
+    #    can carry 100+).
+    permits_payload: list[dict] = []
+    try:
+        from pipa.models.permit import PermitRecord
+        permits_q = await db.execute(
+            select(PermitRecord)
+            .where(
+                PermitRecord.property_id == ctx.property_id,
+                PermitRecord.issue_date.isnot(None),
+            )
+            .order_by(PermitRecord.issue_date.desc())
+            .limit(50)
+        )
+        for p in permits_q.scalars().all():
+            permits_payload.append({
+                "permit_number": p.permit_number,
+                "type": p.type,
+                "description": p.description,
+                "issue_date": p.issue_date.isoformat() if p.issue_date else None,
+                "final_date": p.final_date.isoformat() if p.final_date else None,
+                "status": p.status,
+            })
+    except Exception:
+        # Loud — silent permit drops mean Claude fabricates "newer HVAC"
+        # guesses instead of citing the 2016 furnace permit, and the
+        # buyer trusts an AI answer that should have been deterministic.
+        logger.warning(
+            "AI Pass 1: failed to load permits for %s", ctx.property_id,
+            exc_info=True,
+        )
+        ctx.warnings.append("permits_unavailable")
+
     result = await extract_all_from_listing(
         description=ctx.description,
         listing_facts=listing_facts if listing_facts else None,
         county_data=county_summary,
+        permits=permits_payload if permits_payload else None,
     )
 
     # Store extracted data
@@ -716,6 +770,56 @@ async def _task_resolver(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     canonical, conflicts, unknowns = _resolve_canonical(
         ctx.listing_data, ctx.county_data, ctx.ai_extracted,
     )
+
+    # User-managed manual overrides — these beat ALL other sources
+    # (rank 100 vs county=90 / ai=35 / year_built default). Used when
+    # the buyer has private knowledge that contradicts every automated
+    # signal — e.g. seller said the water heater was replaced in 2017
+    # but no permit exists.
+    #
+    # Source provenance is stored on ctx.source_meta, NOT in canonical
+    # itself. _resolve_canonical strips _source_* keys before returning;
+    # if we wrote them back into canonical they'd pollute every
+    # downstream consumer that does json.dumps(canonical) — Pass 2's
+    # property_data, the decision packet, etc. — burning prompt
+    # budget on metadata the model doesn't read.
+    applied_overrides = 0
+    try:
+        from pipa.services.component_overrides import get_overrides
+        overrides = await get_overrides(db, ctx.property_id)
+    except Exception:
+        logger.exception(
+            "Resolver: failed to load manual component overrides for %s",
+            ctx.property_id,
+        )
+        overrides = {}
+
+    for canonical_key, info in (overrides or {}).items():
+        try:
+            raw_year = info.get("year") if isinstance(info, dict) else None
+            if raw_year is None:
+                continue
+            year = int(raw_year)
+            if year < 1800 or year > 2100:
+                logger.warning(
+                    "Resolver: override year %r for %s.%s out of range, skipping",
+                    raw_year, ctx.property_id, canonical_key,
+                )
+                continue
+            field = f"component_{canonical_key}_year"
+            canonical[field] = year
+            ctx.source_meta[field] = {"source": "manual_override", "rank": 100}
+            applied_overrides += 1
+        except (TypeError, ValueError):
+            logger.warning(
+                "Resolver: override for %s.%s has invalid year %r, skipping",
+                ctx.property_id, canonical_key, info,
+            )
+    if applied_overrides:
+        logger.info(
+            "Resolver: applied %d manual component overrides", applied_overrides,
+        )
+
     ctx.canonical = canonical
     ctx.conflicts = conflicts
     ctx.unknowns = unknowns
@@ -860,46 +964,16 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
     year_built = _to_int(ctx.canonical.get("year_built"))
 
     # Build a set of canonical_keys that were AI-extracted with a
-    # non-null year. This mirrors _canonical_component_key in
-    # pipeline.py but we only need to compute the keys once.
-    from pipa.services.pipeline import _resolve_canonical  # noqa: F401  (ensures _COMPONENT_KEYWORDS loaded)
-    ai_sourced_keys: set[str] = set()
+    # non-null year. Single source of truth lives in pipeline.py — both
+    # the resolver and this task use the same keyword table, so adding
+    # a new component (e.g. bathroom, gazebo) doesn't require touching
+    # both files.
+    from pipa.services.pipeline import ai_canonical_keys
     try:
-        ai_components = (ctx.ai_extracted or {}).get("components") or []
-        # Recreate the substring-matching logic inline (the helper
-        # is a closure inside _resolve_canonical, not exported).
-        _KW = [
-            ("water_heater", ("water_heater", "water heater", "water heat", "hot_water")),
-            ("hvac",         ("hvac", "heat_pump", "heatpump", "heat pump",
-                              "furnace", "central_air", "central air",
-                              "air_conditioning", "air conditioning", "ac_unit",
-                              "heating", "cooling")),
-            ("roof",         ("roof",)),
-            ("electrical_panel", ("electrical_panel", "electrical panel",
-                                  "breaker_box", "service_panel", "panel",
-                                  "electrical")),
-            ("windows",      ("window",)),
-            ("appliances",   ("appliance",)),
-            ("fence",        ("fence", "fencing")),
-            ("siding",       ("siding", "exterior")),
-            ("driveway",     ("driveway",)),
-            ("garage_door",  ("garage_door", "garage door")),
-            ("deck",         ("deck", "decking")),
-            ("patio",        ("patio",)),
-            ("kitchen",      ("kitchen",)),
-            ("basement",     ("basement",)),
-            ("sprinkler",    ("sprinkler", "irrigation")),
-        ]
-        for comp in ai_components:
-            if comp.get("year") is None:
-                continue
-            raw = (comp.get("component") or "").lower().replace("_", " ").strip()
-            for canon, patterns in _KW:
-                if any(p.replace("_", " ") in raw for p in patterns):
-                    ai_sourced_keys.add(canon)
-                    break
+        ai_sourced_keys = ai_canonical_keys((ctx.ai_extracted or {}).get("components"))
     except Exception:
         logger.debug("Condition: failed to derive AI-sourced key set", exc_info=True)
+        ai_sourced_keys = set()
 
     components: list[dict] = []
     for canonical_key, mapped_type in type_map.items():
@@ -907,13 +981,20 @@ async def _task_condition(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         if not year:
             continue
 
-        # Source = AI if the resolver saw this canonical_key from the
-        # ai_extracted component list AND we can see it ourselves. Any
-        # component that isn't in ai_sourced_keys must have been filled
-        # in by the resolver's year_built default.
-        is_ai_sourced = canonical_key in ai_sourced_keys
-        is_defaulted = not is_ai_sourced
-        source = "ai_extracted" if is_ai_sourced else "default_year_built"
+        # Source classification — manual overrides win, then AI-extracted,
+        # then year_built default. The resolver records override provenance
+        # on ctx.source_meta (kept out of canonical so json.dumps doesn't
+        # waste prompt tokens on metadata).
+        src_meta = ctx.source_meta.get(f"component_{canonical_key}_year") or {}
+        is_manual = src_meta.get("source") == "manual_override"
+        is_ai_sourced = (not is_manual) and (canonical_key in ai_sourced_keys)
+        is_defaulted = not (is_manual or is_ai_sourced)
+        if is_manual:
+            source = "manual_override"
+        elif is_ai_sourced:
+            source = "ai_extracted"
+        else:
+            source = "default_year_built"
 
         lifespan = DEFAULT_LIFESPANS.get(mapped_type)
         if lifespan is None:
@@ -1107,35 +1188,38 @@ async def _task_ai_pass_2(ctx: _ExecutionContext, db: AsyncSession) -> dict:
         except Exception:
             logger.debug("Could not load comp data for AI Pass 2")
 
-        # Load school data from DB
+        # Load school + flood data in a single SourceRecord query.
+        # AsyncSession isn't safe with concurrent db.execute calls so we
+        # can't asyncio.gather two selects on the same session — but a
+        # single SELECT with `source_name IN (...)` ordered by
+        # fetched_at DESC saves a round-trip vs the previous two
+        # sequential queries. We then take the most recent row of each
+        # source_name in Python.
         school_data = None
-        try:
-            from pipa.models.source import SourceRecord
-            school_result = await db.execute(
-                select(SourceRecord).where(
-                    SourceRecord.property_id == ctx.property_id,
-                    SourceRecord.source_name == "lcps_official",
-                ).order_by(SourceRecord.fetched_at.desc()).limit(1)
-            )
-            school_record = school_result.scalar_one_or_none()
-            if school_record and school_record.raw_payload:
-                school_data = school_record.raw_payload
-        except Exception:
-            logger.debug("Could not load school data for AI Pass 2")
-
-        # Load flood zone data
         flood_data = None
         try:
             from pipa.models.source import SourceRecord
-            flood_result = await db.execute(
-                select(SourceRecord).where(
+            sr_result = await db.execute(
+                select(SourceRecord)
+                .where(
                     SourceRecord.property_id == ctx.property_id,
-                    SourceRecord.source_name == "fema_flood_zone",
-                ).order_by(SourceRecord.fetched_at.desc()).limit(1)
+                    SourceRecord.source_name.in_(
+                        ("lcps_official", "fema_flood_zone")
+                    ),
+                )
+                .order_by(SourceRecord.fetched_at.desc())
             )
-            flood_record = flood_result.scalar_one_or_none()
-            if flood_record and flood_record.raw_payload:
-                flood_data = flood_record.raw_payload
+            for record in sr_result.scalars().all():
+                if record.source_name == "lcps_official" and school_data is None:
+                    if record.raw_payload:
+                        school_data = record.raw_payload
+                elif record.source_name == "fema_flood_zone" and flood_data is None:
+                    if record.raw_payload:
+                        flood_data = record.raw_payload
+                if school_data is not None and flood_data is not None:
+                    break
+        except Exception:
+            logger.debug("Could not load school/flood data for AI Pass 2")
         except Exception:
             logger.debug("Could not load flood data for AI Pass 2")
 
@@ -1387,13 +1471,44 @@ async def _task_permits(ctx: _ExecutionContext, db: AsyncSession) -> dict:
 
 
 async def _task_comp_quick(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """Quick comp search — placeholder for future implementation."""
-    return {"skipped": True, "reason": "not yet implemented"}
+    """Quick comp: score pre-scraped candidates, no external calls.
+
+    Runs off whatever is already in the DB from county_scrape
+    (Neighborhood Sales). Cheap — ~seconds.
+    """
+    from pipa.services.comp_service import CompService
+    result = await CompService.quick_comp(db, ctx.property_id)
+    band = result.get("rough_value_band") or {}
+    return {
+        "sold_count": result.get("sold_count", 0),
+        "active_count": result.get("active_count", 0),
+        "pending_count": result.get("pending_count", 0),
+        "filtered_count": len(result.get("filtered_comps") or []),
+        "value_low": band.get("low"),
+        "value_high": band.get("high"),
+        "confidence": result.get("quick_confidence"),
+    }
 
 
 async def _task_comp_deep(ctx: _ExecutionContext, db: AsyncSession) -> dict:
-    """Deep comp analysis — placeholder for future implementation."""
-    return {"skipped": True, "reason": "not yet implemented"}
+    """Deep comp: county-enrich top candidates + full adjustment engine.
+
+    Slow (~1-2 min) — pre-enriches every ranked candidate with full
+    county data, then runs the appraisal adjustment engine on the
+    top N. Runs per-property Zillow fetches for each surviving comp.
+    """
+    from pipa.services.comp_service import CompService
+    result = await CompService.deep_comp(db, ctx.property_id)
+    vr = result.get("value_range") or {}
+    return {
+        "sold_count": len(result.get("sold_comps") or []),
+        "active_count": len(result.get("active_listings") or []),
+        "pending_count": len(result.get("pending_listings") or []),
+        "value_low": vr.get("low"),
+        "value_high": vr.get("high"),
+        "value_mid": vr.get("mid"),
+        "confidence": result.get("confidence"),
+    }
 
 
 # Handler dispatch table

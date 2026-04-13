@@ -215,25 +215,58 @@ def _parse_json_from_response(text: str) -> Any:
 _MAX_LISTING_TEXT_CHARS = 20_000
 
 
-async def extract_components_from_text(text: str) -> list[dict]:
-    """Extract home component replacements/upgrades from listing text.
+async def extract_components_from_text(
+    text: str,
+    permits: list[dict] | None = None,
+) -> list[dict]:
+    """Extract home component replacements/upgrades from listing text + permits.
 
     Uses Claude CLI to parse free-text descriptions like:
     "new roof 2024, HVAC replaced 2023, updated kitchen..."
 
-    Returns list of dicts: [{component, year, details, confidence}, ...]
+    When `permits` is provided, county permit history is included alongside
+    the listing text. Permits are AUTHORITATIVE for install years — if the
+    listing says "newer HVAC" and a 2016 furnace permit exists, use 2016.
+
+    Returns list of dicts: [{component, year, details, confidence, source}, ...]
     """
     if not text or len(text.strip()) < 20:
-        return []
+        # Even with no text, permits alone may yield components
+        if not permits:
+            return []
+        text = "(no listing description provided)"
+
+    permit_block = ""
+    if permits:
+        # Trim to the fields the model needs and cap to keep prompt small.
+        permit_lines = []
+        for p in permits[:50]:
+            issue = p.get("issue_date") or ""
+            if issue and len(issue) >= 10:
+                issue = issue[:10]  # YYYY-MM-DD
+            ptype = p.get("type") or ""
+            desc = (p.get("description") or "").strip()
+            status = p.get("status") or ""
+            permit_lines.append(f"- {issue} | {ptype} | {desc} | {status}")
+        permit_block = (
+            "\n\nCounty permit history (AUTHORITATIVE for install years — "
+            "trust permit dates over vague listing claims like 'newer' or "
+            "'recently updated'):\n" + "\n".join(permit_lines)
+        )
 
     prompt = (
         "Extract all home component replacements, upgrades, and renovations "
-        "from this listing description. Return ONLY a JSON array with objects "
-        "containing: component (string), year (int or null), details (string), "
-        "confidence (string: high if year is explicitly stated, medium if "
-        "implied like 'recently', low if vague). "
+        "from this listing description AND from the county permit history below. "
+        "Return ONLY a JSON array with objects containing: "
+        "component (string), year (int or null), details (string), "
+        "confidence (string: high if year is from a permit OR explicitly stated, "
+        "medium if implied like 'recently', low if vague), "
+        "source (string: 'permit', 'listing', or 'both' when corroborated). "
+        "If the listing and a permit describe the same upgrade, MERGE them into "
+        "one entry with source='both' and use the permit's year. "
         "No explanation, just the JSON array.\n\n"
         f"Listing text:\n{text[:_MAX_LISTING_TEXT_CHARS]}"
+        f"{permit_block}"
     )
 
     response = await _ask_claude(prompt, call_label="extract_components")
@@ -352,16 +385,19 @@ async def extract_all_from_listing(
     description: str,
     listing_facts: dict | None = None,
     county_data: dict | None = None,
+    permits: list[dict] | None = None,
 ) -> dict:
     """One-shot extraction: components + red flags + motivation + validation.
 
     Combines all AI extraction into a single comprehensive analysis.
     If county_data is provided, also validates listing claims against it.
+    If permits are provided, they're fed to the components extractor as
+    an authoritative source for install years.
     """
     result = {}
 
-    # Extract components from description
-    components = await extract_components_from_text(description)
+    # Extract components from description + permits
+    components = await extract_components_from_text(description, permits=permits)
     if components:
         result["components"] = components
 
@@ -384,6 +420,48 @@ async def extract_all_from_listing(
     return result
 
 
+# Fields we surface to Pass 2 from the canonical/listing dict. Order is
+# preserved in the JSON output so the model sees the most decision-relevant
+# data first. Adding new fields is cheap; the goal is to keep the prompt
+# tight (~600-800 chars) instead of dumping the whole canonical and hoping
+# truncation doesn't slice through `asking_price`.
+_PASS2_LISTING_FIELDS: tuple[str, ...] = (
+    "asking_price", "price",
+    "bedrooms", "beds",
+    "bathrooms", "baths_canonical", "full_baths", "half_baths",
+    "sqft_above_grade", "sqft_listing", "sqft_livable", "basement_finished_sqft",
+    "year_built",
+    "lot_acres", "lot_sqft_listing",
+    "home_type", "home_type_listing", "property_subtype",
+    "style", "architectural_style",
+    "subdivision",
+    "hoa_monthly", "has_hoa",
+    "condition", "grade",
+    "parcel_id", "parcel_number",
+    "zoning",
+    "zillow_condition",
+)
+
+
+def _build_listing_summary(canonical: dict | None) -> dict:
+    """Pull just the decision-relevant listing fields out of canonical.
+
+    Avoids dumping the whole 80+ key dict and risking that the 2000-char
+    truncation slices through `asking_price` or `bedrooms`. Anything not
+    in `_PASS2_LISTING_FIELDS` is dropped here, since Pass 2's prompt only
+    cites a small handful of facts anyway.
+    """
+    if not canonical:
+        return {}
+    out: dict = {}
+    for key in _PASS2_LISTING_FIELDS:
+        val = canonical.get(key)
+        if val is None or val == "" or val == []:
+            continue
+        out[key] = val
+    return out
+
+
 async def generate_property_summary(
     property_data: dict,
     county_data: dict | None = None,
@@ -401,23 +479,79 @@ async def generate_property_summary(
     condition, schools, flood, warnings — into a comprehensive
     buyer-oriented summary with pursue/maybe/pass recommendation.
     """
-    context_parts = [f"Listing data: {json.dumps(property_data, default=str)[:2000]}"]
+    # Build a typed listing summary instead of `json.dumps(property_data)[:2000]`.
+    # The raw `ctx.canonical` dict has 80+ keys; an indiscriminate truncation
+    # is order-dependent and can drop the fields Pass 2 actually reads (price,
+    # beds, baths, sqft) while keeping debug fields nobody cares about.
+    listing_summary = _build_listing_summary(property_data)
+    context_parts = [f"Listing data: {json.dumps(listing_summary, default=str)}"]
     if county_data:
         context_parts.append(f"County data: {json.dumps(county_data, default=str)[:1500]}")
     if price_benchmarks:
         context_parts.append(f"Price benchmarks: {json.dumps(price_benchmarks, default=str)[:500]}")
     if comp_data:
-        # Include value band, confidence, asking assessment, filtered comps summary
-        comp_summary = {}
-        if comp_data.get("rough_value_band"):
-            comp_summary["value_band"] = comp_data["rough_value_band"]
-        if comp_data.get("quick_confidence"):
-            comp_summary["confidence"] = comp_data["quick_confidence"]
+        # Deep comp and quick comp use different field names. Normalize
+        # both into one shape so the prompt gets the same information
+        # regardless of which ran. Deep comp is preferred by
+        # _task_ai_pass_2 when available, so prefer its richer fields
+        # (value_range, sold_comps w/ adjustments, appraisal, data_quality).
+        comp_summary: dict = {}
+        is_deep = bool(comp_data.get("value_range") or comp_data.get("appraisal"))
+        comp_summary["source"] = "deep_comp" if is_deep else "quick_comp"
+
+        # Value band — deep uses value_range {low, mid, high}, quick uses rough_value_band
+        value_band = comp_data.get("value_range") or comp_data.get("rough_value_band")
+        if value_band:
+            comp_summary["value_band"] = value_band
+
+        # Confidence
+        confidence = comp_data.get("confidence") or comp_data.get("quick_confidence")
+        if confidence:
+            comp_summary["confidence"] = confidence
+
+        # Asking-vs-comps — quick has it directly; deep exposes it via market_context
         if comp_data.get("asking_vs_comps"):
             comp_summary["asking_vs_comps"] = comp_data["asking_vs_comps"]
-        if comp_data.get("filtered_comps"):
-            comp_summary["comp_count"] = len(comp_data["filtered_comps"])
-            comp_summary["comps"] = comp_data["filtered_comps"][:6]
+        elif (comp_data.get("market_context") or {}).get("asking_vs_active"):
+            comp_summary["asking_vs_active"] = comp_data["market_context"]["asking_vs_active"]
+
+        # Comp list — deep uses sold_comps (county-verified + adjusted),
+        # quick uses filtered_comps (raw candidates). Cap at 6 to keep
+        # the prompt under the token budget.
+        sold_comps = comp_data.get("sold_comps") or comp_data.get("filtered_comps") or []
+        if sold_comps:
+            comp_summary["comp_count"] = len(sold_comps)
+            comp_summary["comps"] = sold_comps[:6]
+
+        # Deep-only: appraisal result (final reconciled value + per-comp
+        # adjustments summary). This is the most valuable thing to feed
+        # Claude — it's the math-only verdict on what the house is worth.
+        if comp_data.get("appraisal"):
+            app = comp_data["appraisal"]
+            comp_summary["appraisal"] = {
+                "estimated_value_low": app.get("estimated_value_low"),
+                "estimated_value_mid": app.get("estimated_value_mid"),
+                "estimated_value_high": app.get("estimated_value_high"),
+                "price_per_sqft_market": app.get("price_per_sqft_market"),
+                "subject_price_per_sqft": app.get("subject_price_per_sqft"),
+                "value_assessment": app.get("value_assessment"),
+                "confidence": app.get("confidence"),
+                "price_benchmarks": app.get("price_benchmarks"),
+            }
+        if comp_data.get("adjustments_summary"):
+            comp_summary["adjustments_summary"] = comp_data["adjustments_summary"]
+
+        # Deep-only: data quality flags (e.g. sqft conflicts, missing fields)
+        if comp_data.get("data_quality"):
+            comp_summary["data_quality"] = comp_data["data_quality"]
+        if comp_data.get("conflicts"):
+            comp_summary["comp_conflicts"] = comp_data["conflicts"][:4]
+
+        # Deep-only: market context (active/pending counts + price ranges)
+        if comp_data.get("market_context"):
+            comp_summary["market_context"] = comp_data["market_context"]
+
+        # AI interpretation (written by comp_service itself when deep runs).
         if comp_data.get("ai_interpretation"):
             ai_int = comp_data["ai_interpretation"]
             if ai_int.get("value_opinion"):
@@ -426,7 +560,11 @@ async def generate_property_summary(
                 comp_summary["ai_asking_assessment"] = ai_int["asking_assessment"]
             if ai_int.get("key_insights"):
                 comp_summary["ai_insights"] = ai_int["key_insights"]
-        context_parts.append(f"Comparable sales: {json.dumps(comp_summary, default=str)[:1500]}")
+
+        # Bumped from 1500 to 3500 — deep comp's appraisal + per-comp
+        # adjustments are the highest-value context in the whole prompt
+        # and getting truncated is the worst place to lose info.
+        context_parts.append(f"Comparable sales: {json.dumps(comp_summary, default=str)[:3500]}")
     if financial_data:
         fin_summary = {}
         for key in ("payment_breakdowns", "cash_at_closing", "stress_tests", "monthly_total"):

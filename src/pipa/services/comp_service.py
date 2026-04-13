@@ -238,8 +238,12 @@ class CompService:
                 else:
                     asking_vs_comps = "at"
 
+        # Persisted shape — drop the unbounded raw `candidates` list.
+        # `find_comp_candidates` is cheap to re-run if anyone needs the
+        # full set, and persisting all 40-80 raw candidate dicts on every
+        # quick_comp run was bloating AnalysisRun rows that get reloaded
+        # on every page render via get_stored_results.
         result = {
-            "candidates": [c.model_dump() for c in all_candidates],
             "filtered_comps": [c.model_dump() for c in filtered],
             "sold_count": len(sold),
             "active_count": len(active),

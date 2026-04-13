@@ -7,6 +7,8 @@
 
 import { formatCurrency, escapeHtml } from '../../../utils.js';
 import { renderBadge } from '../../../components/badge.js';
+import { api } from '../../../api.js';
+import { showToast } from '../../../toast.js';
 
 export const TITLE = 'Condition';
 export const ID = 'condition';
@@ -53,7 +55,22 @@ export function headerExtra(state) {
 // ── Helpers ────────────────────────────────────────────────────────
 
 function _getData(state) {
-    return state.conditionData || state.analysisResults?.condition?.output || null;
+    const raw = state.conditionData || state.analysisResults?.condition?.output || null;
+    if (!raw) return null;
+    // Apply manual overrides on read so they survive page refreshes
+    // even before the next pipeline run rewrites the stored condition.
+    const overrides = state.componentOverrides || {};
+    if (!Object.keys(overrides).length || !Array.isArray(raw.components)) {
+        return raw;
+    }
+    return {
+        ...raw,
+        components: raw.components.map(c => {
+            const ov = overrides[c.canonical_key];
+            if (!ov || ov.year == null) return c;
+            return _recomputeComponent(c, ov.year);
+        }),
+    };
 }
 
 function scoreColor(score) {
@@ -121,7 +138,9 @@ function renderComponentRow(comp) {
     const lifespan = comp.lifespan;
     const remaining = comp.remaining_life;
     const cost = comp.replacement_cost;
+    const canonicalKey = comp.canonical_key || '';
     const isDefaulted = comp.is_defaulted || comp.source === 'default_year_built';
+    const isManual = comp.source === 'manual_override';
 
     const status = _statusForComp(comp);
     const rlColor = remainingLifeColor(remaining);
@@ -136,10 +155,42 @@ function renderComponentRow(comp) {
             ? 'bg-amber-500'
             : 'bg-green-500';
 
-    const yearCell = year != null ? String(year) : '<span class="text-gray-300">?</span>';
-    const yearNote = isDefaulted
-        ? '<span class="text-[9px] text-gray-400 ml-1" title="Defaulted to year built — no specific install year extracted">(est)</span>'
-        : '';
+    const yearText = year != null ? String(year) : '?';
+    let yearBadge = '';
+    if (isManual) {
+        yearBadge = '<span class="text-[9px] text-blue-500 ml-1" title="Manual override">[manual]</span>';
+    } else if (isDefaulted) {
+        yearBadge = '<span class="text-[9px] text-gray-400 ml-1" title="Defaulted to year built — no specific install year extracted">(est)</span>';
+    } else if (comp.source === 'ai_extracted') {
+        yearBadge = '<span class="text-[9px] text-green-500 ml-1" title="From AI / permits">[ai]</span>';
+    }
+
+    // Year cell becomes a click target if we know the canonical key.
+    // Two-state: display vs editor (the editor is hidden by default
+    // and toggled in bind() via data-component-edit handlers).
+    const yearCell = canonicalKey ? `
+        <div data-component-row="${escapeHtml(canonicalKey)}" class="inline-flex items-center gap-1">
+            <span data-year-display="${escapeHtml(canonicalKey)}" class="cursor-pointer hover:text-blue-600" title="Click to edit install year">
+                ${yearText}${yearBadge}
+            </span>
+            <button data-year-edit="${escapeHtml(canonicalKey)}" type="button"
+                    class="text-gray-300 hover:text-blue-500 text-[10px] leading-none"
+                    title="Edit install year">&#9998;</button>
+            ${isManual ? `<button data-year-clear="${escapeHtml(canonicalKey)}" type="button"
+                    class="text-gray-300 hover:text-red-500 text-[10px] leading-none"
+                    title="Clear manual override (revert to automatic)">&times;</button>` : ''}
+            <span data-year-editor="${escapeHtml(canonicalKey)}" class="hidden items-center gap-1">
+                <input data-year-input="${escapeHtml(canonicalKey)}" type="number" min="1800" max="2100"
+                    value="${year != null ? year : ''}"
+                    class="w-16 px-1 py-0 text-xs border border-blue-400 rounded font-mono" />
+                <button data-year-save="${escapeHtml(canonicalKey)}" type="button"
+                    class="text-green-600 hover:text-green-700 text-xs">&#10003;</button>
+                <button data-year-cancel="${escapeHtml(canonicalKey)}" type="button"
+                    class="text-gray-400 hover:text-gray-600 text-xs">&times;</button>
+            </span>
+        </div>
+    ` : `${yearText}${yearBadge}`;
+
     const ageCell = age != null ? `${age}y` : '&mdash;';
     const lifeCell = lifespan != null ? `${lifespan}y` : '&mdash;';
     const remainingCell = remaining != null
@@ -155,15 +206,17 @@ function renderComponentRow(comp) {
            </div>`
         : '<div class="w-16"></div>';
 
+    const rowClass = isManual ? 'bg-blue-50/40' : '';
+
     return `
-    <tr class="hover:bg-gray-50 transition-colors">
+    <tr class="hover:bg-gray-50 transition-colors ${rowClass}">
         <td class="px-2 py-1 text-xs">
             <div class="flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full ${status.dot} shrink-0"></span>
                 <span class="font-medium text-gray-900 capitalize">${escapeHtml(displayName)}</span>
             </div>
         </td>
-        <td class="px-2 py-1 text-xs text-gray-700 text-right font-mono">${yearCell}${yearNote}</td>
+        <td class="px-2 py-1 text-xs text-gray-700 text-right font-mono">${yearCell}</td>
         <td class="px-2 py-1 text-xs text-gray-600 text-right font-mono">${ageCell}</td>
         <td class="px-2 py-1 text-xs text-gray-500 text-right font-mono">${lifeCell}</td>
         <td class="px-2 py-1 text-xs text-right font-mono">${remainingCell}</td>
@@ -330,7 +383,159 @@ export function render(state) {
 
 // ── Bind ────────────────────────────────────────────────────────────
 
+/**
+ * Recompute a single component row in-place using the same lifespan/cost
+ * constants the backend uses. Avoids a full pipeline rerun for what is
+ * pure local arithmetic — the user just gets snappy feedback when they
+ * type a year. The next pipeline run will re-derive everything from
+ * stored overrides anyway.
+ */
+function _recomputeComponent(comp, newYear) {
+    const updated = { ...comp };
+    updated.estimated_install_year = newYear;
+    updated.source = 'manual_override';
+    updated.is_defaulted = false;
+    if (newYear != null) {
+        updated.age = new Date().getFullYear() - newYear;
+        if (updated.lifespan != null) {
+            updated.remaining_life = Math.max(0, updated.lifespan - updated.age);
+        }
+    }
+    return updated;
+}
+
+function _enterEditMode(container, key) {
+    const display = container.querySelector(`[data-year-display="${key}"]`);
+    const editBtn = container.querySelector(`[data-year-edit="${key}"]`);
+    const clearBtn = container.querySelector(`[data-year-clear="${key}"]`);
+    const editor = container.querySelector(`[data-year-editor="${key}"]`);
+    const input = container.querySelector(`[data-year-input="${key}"]`);
+    if (!display || !editor) return;
+    display.classList.add('hidden');
+    if (editBtn) editBtn.classList.add('hidden');
+    if (clearBtn) clearBtn.classList.add('hidden');
+    editor.classList.remove('hidden');
+    editor.classList.add('inline-flex');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
+function _exitEditMode(container, key) {
+    const display = container.querySelector(`[data-year-display="${key}"]`);
+    const editBtn = container.querySelector(`[data-year-edit="${key}"]`);
+    const clearBtn = container.querySelector(`[data-year-clear="${key}"]`);
+    const editor = container.querySelector(`[data-year-editor="${key}"]`);
+    if (!display || !editor) return;
+    display.classList.remove('hidden');
+    if (editBtn) editBtn.classList.remove('hidden');
+    if (clearBtn) clearBtn.classList.remove('hidden');
+    editor.classList.add('hidden');
+    editor.classList.remove('inline-flex');
+}
+
 export function bind(container, state, actions) {
-    // Nothing to bind — the section is read-only. Use the global "Run
-    // Pipeline" action in the header to refresh condition data.
+    // Inline edit handlers for component install years.
+    //
+    // Updates are saved to AppSetting via the component-overrides API.
+    // The override is applied at rank 100 by the resolver on the next
+    // pipeline run, beating county/AI/year_built defaults. We also
+    // recompute the row in place so the user sees immediate feedback
+    // without having to wait for a full rerun.
+    if (!container) return;
+    if (!state.propertyId) return;
+
+    // GUARD: rerenderSection calls bind() again on the same DOM element
+    // every time the section refreshes. Without this guard each refresh
+    // stacks another click listener and a single edit fires N requests
+    // in parallel — which races past the upsert and (used to) trip the
+    // UNIQUE constraint. We tag the container so subsequent binds skip.
+    if (container.dataset.conditionBound === 'true') return;
+    container.dataset.conditionBound = 'true';
+
+    // Important: read state.propertyId INSIDE each handler invocation,
+    // not via outer closure. The dataset.conditionBound guard prevents
+    // re-binding, so if SPA navigation reuses the section element across
+    // properties the closure would otherwise write overrides to the
+    // WRONG property. `state` is captured by reference; `state.propertyId`
+    // tracks the live value.
+    container.addEventListener('click', async (e) => {
+        const propertyId = state.propertyId;
+        if (!propertyId) return;
+        const editBtn = e.target.closest('[data-year-edit], [data-year-display]');
+        if (editBtn) {
+            const key = editBtn.getAttribute('data-year-edit') || editBtn.getAttribute('data-year-display');
+            _enterEditMode(container, key);
+            return;
+        }
+        const cancelBtn = e.target.closest('[data-year-cancel]');
+        if (cancelBtn) {
+            _exitEditMode(container, cancelBtn.getAttribute('data-year-cancel'));
+            return;
+        }
+        const saveBtn = e.target.closest('[data-year-save]');
+        if (saveBtn) {
+            const key = saveBtn.getAttribute('data-year-save');
+            const input = container.querySelector(`[data-year-input="${key}"]`);
+            const yearStr = input?.value || '';
+            const year = parseInt(yearStr, 10);
+            if (!year || year < 1800 || year > 2100) {
+                showToast('Enter a valid year between 1800 and 2100', 'error');
+                return;
+            }
+            try {
+                await api.setComponentOverride(propertyId, key, year);
+                // Stash the override on state so _getData picks it up
+                // on every subsequent render (and after page refresh
+                // once lazyLoadAll re-fetches the override list).
+                if (!state.componentOverrides) state.componentOverrides = {};
+                state.componentOverrides[key] = {
+                    year,
+                    notes: null,
+                    set_at: new Date().toISOString(),
+                };
+                showToast(`${key} install year set to ${year}`, 'success');
+                if (typeof actions?.rerenderSection === 'function') {
+                    actions.rerenderSection('condition');
+                }
+            } catch (err) {
+                showToast(`Failed to save: ${err.message}`, 'error');
+            }
+            return;
+        }
+        const clearBtn = e.target.closest('[data-year-clear]');
+        if (clearBtn) {
+            const key = clearBtn.getAttribute('data-year-clear');
+            if (!confirm(`Clear manual override for ${key}? It will revert to the automatic value on the next pipeline run.`)) return;
+            try {
+                await api.deleteComponentOverride(propertyId, key);
+                if (state.componentOverrides) {
+                    delete state.componentOverrides[key];
+                }
+                showToast(`${key} override cleared — rerun pipeline for full refresh`, 'success');
+                if (typeof actions?.rerenderSection === 'function') {
+                    actions.rerenderSection('condition');
+                }
+            } catch (err) {
+                showToast(`Failed to clear: ${err.message}`, 'error');
+            }
+            return;
+        }
+    });
+
+    // Allow Enter to save / Esc to cancel inside the year input
+    container.addEventListener('keydown', (e) => {
+        const input = e.target.closest('[data-year-input]');
+        if (!input) return;
+        const key = input.getAttribute('data-year-input');
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const saveBtn = container.querySelector(`[data-year-save="${key}"]`);
+            saveBtn?.click();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            _exitEditMode(container, key);
+        }
+    });
 }

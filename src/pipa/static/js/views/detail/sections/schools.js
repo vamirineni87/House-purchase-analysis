@@ -41,12 +41,101 @@ export function headerExtra(state) {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
+// Normalize a school name for fuzzy matching: strip level words AND
+// their abbreviations, punctuation, lowercase, collapse spaces.
+// LCPS uses "Pinebrook ES" / "Willard MS" / "Lightridge HS";
+// Zillow uses "Pinebrook Elementary School" — both must collapse to
+// "pinebrook" / "willard" / "lightridge" to match.
+function _normSchoolName(name) {
+    if (!name) return '';
+    return String(name)
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(/\b(elementary|middle|high|junior|senior|primary|intermediate|school|es|ms|hs|jhs|shs|jrhs|srhs)\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Normalize a school level so "elementary" / "Elementary" / "ES" all
+// collapse to the same canonical bucket. Used in the merge key so
+// "Willard ES" and "Willard HS" don't accidentally match each other
+// just because the normalizer strips the level.
+function _normSchoolLevel(level) {
+    if (!level) return '';
+    const l = String(level).toLowerCase().trim();
+    if (l === 'es' || l.startsWith('elem')) return 'elementary';
+    if (l === 'ms' || l.startsWith('mid')) return 'middle';
+    if (l === 'hs' || l.startsWith('high')) return 'high';
+    return l;
+}
+
+// Build a composite match key. Same name at different levels (e.g. a
+// district that has both "Willard Elementary" and "Willard High") must
+// stay distinct or the merge will paste high-school ratings onto the
+// elementary school card.
+function _schoolMatchKey(name, level) {
+    const n = _normSchoolName(name);
+    if (!n) return '';
+    const l = _normSchoolLevel(level);
+    return `${n}|${l}`;
+}
+
 function _getSchools(state) {
-    // Prefer LCPS data, fall back to Zillow
-    if (state.lcpsSchools && state.lcpsSchools.length > 0) return state.lcpsSchools;
     const ld = state.listingData || {};
-    const raw = ld.assigned_schools || ld.nearby_schools || state.schools || [];
-    return Array.isArray(raw) ? raw : [];
+    const zillowSchools = Array.isArray(ld.assigned_schools) && ld.assigned_schools.length > 0
+        ? ld.assigned_schools
+        : (Array.isArray(ld.nearby_schools) ? ld.nearby_schools : []);
+    const lcpsSchools = Array.isArray(state.lcpsSchools) ? state.lcpsSchools : [];
+
+    // Index Zillow by (normalized name + level) so same-name schools at
+    // different levels don't merge into one row, and so we can track
+    // which Zillow rows have been consumed by an LCPS match.
+    const zillowByKey = {};
+    for (const z of zillowSchools) {
+        const k = _schoolMatchKey(z.name, z.level);
+        if (k) zillowByKey[k] = z;
+    }
+    const consumed = new Set();
+
+    const out = [];
+
+    // 1. LCPS schools first (boundary-authoritative). Merge in Zillow's
+    //    score fields by (name, level) match.
+    for (const lcps of lcpsSchools) {
+        const k = _schoolMatchKey(lcps.name, lcps.level);
+        const z = zillowByKey[k] || {};
+        if (k && zillowByKey[k]) consumed.add(k);
+        out.push({
+            ...z,            // pull in scores/enrollment/links from Zillow
+            ...lcps,         // LCPS overrides for name/principal/level/address
+            _source: 'lcps',
+            rating: lcps.rating ?? z.rating ?? null,
+            grades: lcps.grades || z.grades || '',
+            level: lcps.level || z.level || '',
+            distance_mi: lcps.distance_mi ?? z.distance_mi ?? null,
+            enrollment: lcps.enrollment ?? z.enrollment ?? null,
+            student_teacher_ratio: lcps.student_teacher_ratio ?? z.student_teacher_ratio ?? null,
+            student_counselor_ratio: lcps.student_counselor_ratio ?? z.student_counselor_ratio ?? null,
+            pct_certified_teachers: lcps.pct_certified_teachers ?? z.pct_certified_teachers ?? null,
+            greatschools_link: lcps.greatschools_link || z.greatschools_link || null,
+        });
+    }
+
+    // 2. Zillow schools that weren't matched to any LCPS row. These
+    //    might be boundary mismatches (different school assigned by
+    //    Zillow vs LCPS) or nearby/non-assigned schools.
+    for (const z of zillowSchools) {
+        const k = _schoolMatchKey(z.name, z.level);
+        if (k && consumed.has(k)) continue;
+        out.push({ ...z, _source: 'zillow' });
+    }
+
+    // 3. Fallback: if neither source has data, try state.schools (legacy field)
+    if (out.length === 0 && Array.isArray(state.schools)) {
+        return state.schools.map(s => ({ ...s, _source: s._source || 'zillow' }));
+    }
+
+    return out;
 }
 
 function _getZillowSchools(state) {
@@ -75,19 +164,49 @@ function renderSchoolCard(school, mismatch) {
     const distance = school.distance_mi ?? school.distance;
     const source = school._source || '';
 
-    const ratingDisplay = rating != null
-        ? `<div class="w-12 h-12 rounded-full ${ratingBg(rating)} ring-2 ${ratingRing(rating)} flex items-center justify-center">
-               <span class="text-lg font-bold ${ratingColor(rating)}">${rating}</span>
-           </div>`
-        : `<div class="w-12 h-12 rounded-full bg-gray-100 ring-2 ring-gray-200 flex items-center justify-center">
-               <span class="text-xs text-gray-400">N/A</span>
-           </div>`;
+    // Big score circle + text label so the rating is unambiguous.
+    let ratingDisplay;
+    if (rating != null && rating > 0) {
+        const label = rating >= 8 ? 'Above Avg' : rating >= 6 ? 'Average' : rating >= 4 ? 'Below Avg' : 'Low';
+        ratingDisplay = `
+        <div class="flex flex-col items-center">
+            <div class="w-14 h-14 rounded-full ${ratingBg(rating)} ring-2 ${ratingRing(rating)} flex items-center justify-center">
+                <span class="text-xl font-bold ${ratingColor(rating)}">${rating}</span>
+            </div>
+            <div class="text-[10px] text-gray-500 mt-0.5">${label}</div>
+            <div class="text-[9px] text-gray-400">/10 GS</div>
+        </div>`;
+    } else {
+        ratingDisplay = `
+        <div class="flex flex-col items-center">
+            <div class="w-14 h-14 rounded-full bg-gray-100 ring-2 ring-gray-200 flex items-center justify-center">
+                <span class="text-xs text-gray-400">N/A</span>
+            </div>
+            <div class="text-[9px] text-gray-400 mt-0.5">No score</div>
+        </div>`;
+    }
 
     const details = [];
-    if (grades) details.push(`<div class="flex justify-between"><span class="text-gray-500">Grades</span><span class="font-medium text-gray-700">${escapeHtml(grades)}</span></div>`);
-    if (distance != null) details.push(`<div class="flex justify-between"><span class="text-gray-500">Distance</span><span class="font-medium text-gray-700">${Number(distance).toFixed(1)} mi</span></div>`);
-    if (school.enrollment != null) details.push(`<div class="flex justify-between"><span class="text-gray-500">Enrollment</span><span class="font-medium text-gray-700">${Number(school.enrollment).toLocaleString()}</span></div>`);
-    if (school.student_teacher_ratio != null) details.push(`<div class="flex justify-between"><span class="text-gray-500">Student:Teacher</span><span class="font-medium text-gray-700">${school.student_teacher_ratio}:1</span></div>`);
+    const detailRow = (lbl, val) =>
+        `<div class="flex justify-between"><span class="text-gray-500">${lbl}</span><span class="font-medium text-gray-700">${val}</span></div>`;
+
+    if (grades) details.push(detailRow('Grades', escapeHtml(grades)));
+    if (distance != null) details.push(detailRow('Distance', `${Number(distance).toFixed(1)} mi`));
+    if (school.enrollment != null) details.push(detailRow('Enrollment', Number(school.enrollment).toLocaleString()));
+    if (school.student_teacher_ratio != null) details.push(detailRow('Student:Teacher', `${school.student_teacher_ratio}:1`));
+    if (school.student_counselor_ratio != null) details.push(detailRow('Student:Counselor', `${school.student_counselor_ratio}:1`));
+    if (school.pct_certified_teachers != null) {
+        const pct = Number(school.pct_certified_teachers);
+        const display = pct <= 1 ? `${Math.round(pct * 100)}%` : `${Math.round(pct)}%`;
+        details.push(detailRow('Certified Teachers', display));
+    }
+    if (school.principal) details.push(detailRow('Principal', escapeHtml(school.principal)));
+    if (school.greatschools_link) {
+        const url = school.greatschools_link.startsWith('http')
+            ? school.greatschools_link
+            : `https://www.greatschools.org${school.greatschools_link}`;
+        details.push(`<div class="pt-1"><a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="text-[11px] text-blue-600 hover:underline">View on GreatSchools →</a></div>`);
+    }
 
     const sourceBadge = source === 'lcps'
         ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">LCPS Official</span>'
@@ -155,7 +274,8 @@ export function render(state) {
         </div>`;
     }
 
-    // Normalize and tag source
+    // Normalize and tag source. Carry through all the score-adjacent
+    // fields so the card can show them.
     const normalized = schools.map(s => ({
         name: s.name || 'Unknown',
         rating: s.rating ?? null,
@@ -164,25 +284,26 @@ export function render(state) {
         distance_mi: s.distance_mi ?? s.distance ?? null,
         enrollment: s.enrollment ?? null,
         student_teacher_ratio: s.student_teacher_ratio ?? null,
+        student_counselor_ratio: s.student_counselor_ratio ?? null,
+        pct_certified_teachers: s.pct_certified_teachers ?? null,
+        greatschools_link: s.greatschools_link || null,
+        principal: s.principal || null,
         _source: s._source || '',
     }));
 
-    const levels = ['elementary', 'middle', 'high'];
-    const byLevel = {};
-    for (const s of normalized) {
-        const key = s.level.toLowerCase();
-        if (!byLevel[key]) byLevel[key] = [];
-        byLevel[key].push(s);
-    }
-
-    const ordered = [];
-    for (const level of levels) {
-        const pool = byLevel[level] || [];
-        if (pool.length > 0) ordered.push(pool[0]);
-    }
-    for (const s of normalized) {
-        if (!ordered.includes(s)) ordered.push(s);
-    }
+    // Order by level (elem → middle → high → other), but include EVERY
+    // school. Within a level, LCPS schools come first (authoritative),
+    // then Zillow extras (boundary mismatches or nearby schools).
+    const levelOrder = { elementary: 0, middle: 1, high: 2 };
+    const sourceOrder = { lcps: 0, zillow: 1 };
+    const ordered = [...normalized].sort((a, b) => {
+        const la = levelOrder[(a.level || '').toLowerCase()] ?? 99;
+        const lb = levelOrder[(b.level || '').toLowerCase()] ?? 99;
+        if (la !== lb) return la - lb;
+        const sa = sourceOrder[a._source] ?? 9;
+        const sb = sourceOrder[b._source] ?? 9;
+        return sa - sb;
+    });
 
     const cards = ordered.map(s => {
         const level = s.level.toLowerCase();

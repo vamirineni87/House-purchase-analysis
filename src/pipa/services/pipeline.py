@@ -26,6 +26,95 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 
+# ----------------------------------------------------------------------
+# Component canonical-key mapping
+# ----------------------------------------------------------------------
+#
+# Normalize AI-extracted component names to canonical keys used by the
+# resolver, condition engine, and (now) the manual override API.
+#
+# Claude paraphrases wildly — we've seen "HVAC system (x2)", "HVAC system
+# (both units)", "HVAC systems", "heat pump x2", "central air", etc.
+# Exact-key matching is whack-a-mole, so we substring-match against this
+# table. First match wins, so list MORE SPECIFIC categories before more
+# generic ones (water_heater before hvac, since "water heat" would match
+# both otherwise).
+#
+# Anyone adding a new canonical type — and the matching entry in the
+# condition engine's DEFAULT_LIFESPANS / type_map — must add it here too.
+# This is a single source of truth shared by:
+#   - pipeline._resolve_canonical (rank-35 / rank-30 component years)
+#   - pipeline_orchestrator._task_condition (ai_sourced_keys for source labelling)
+#   - api/v1/component_overrides.VALID_KEYS (manual override allowlist)
+_COMPONENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    # (canonical_key, substring patterns to look for in lowered raw name)
+    # water_heater before hvac — "water heat" catches both "water
+    # heater" and "water heating" (and also "heat pump water
+    # heater", which correctly resolves to water_heater because
+    # the pump is the heating element OF the water heater).
+    ("water_heater", ("water_heater", "water heater", "water heat", "hot_water")),
+    ("hvac",         ("hvac", "heat_pump", "heatpump", "heat pump",
+                      "furnace", "central_air", "central air",
+                      "air_conditioning", "air conditioning", "ac_unit",
+                      "heating", "cooling")),
+    ("roof",         ("roof",)),
+    ("electrical_panel", ("electrical_panel", "electrical panel",
+                          "breaker_box", "service_panel", "panel",
+                          "electrical")),
+    ("windows",      ("window",)),           # matches windows too
+    ("appliances",   ("appliance",)),        # matches appliances too
+    ("fence",        ("fence", "fencing")),
+    ("siding",       ("siding", "exterior")),
+    ("driveway",     ("driveway",)),
+    ("garage_door",  ("garage_door", "garage door", "garage opener")),
+    ("deck",         ("deck", "decking")),
+    ("patio",        ("patio",)),
+    ("kitchen",      ("kitchen",)),           # cabinets, countertops
+    ("bathroom",     ("bathroom", "bath remodel", "shower")),
+    ("basement",     ("basement",)),
+    ("sprinkler",    ("sprinkler", "irrigation")),
+    ("gazebo",       ("gazebo", "pergola")),
+]
+
+
+def canonical_component_key(raw: str) -> str:
+    """Map a free-text AI component name to a canonical short key.
+
+    'HVAC system (both units)' -> 'hvac'
+    'roof asphalt shingle'     -> 'roof'
+    'Quartz kitchen counters'  -> 'kitchen'
+    'Pergola'                  -> 'gazebo'
+    'Whatever'                 -> 'whatever' (passthrough, no match)
+    """
+    if not raw:
+        return ""
+    low = raw.lower().replace("_", " ").strip()
+    for canonical_key, patterns in _COMPONENT_KEYWORDS:
+        for pat in patterns:
+            pat_norm = pat.replace("_", " ")
+            if pat_norm in low:
+                return canonical_key
+    # No match — passthrough with spaces->underscores so we still get a
+    # valid key, just not one the condition engine scores.
+    return raw.lower().replace(" ", "_")
+
+
+def ai_canonical_keys(ai_components: list[dict] | None) -> set[str]:
+    """Return the set of canonical keys an AI-component list resolves to.
+
+    Used by the condition task to label rows with `source='ai_extracted'`
+    when the canonical year actually came from an AI-extracted entry.
+    """
+    out: set[str] = set()
+    for comp in (ai_components or []):
+        if comp.get("year") is None:
+            continue
+        key = canonical_component_key(comp.get("component") or "")
+        if key:
+            out.add(key)
+    return out
+
+
 class PropertyPipeline:
     """Orchestrates the full property analysis pipeline."""
 
@@ -259,64 +348,13 @@ def _resolve_canonical(
             set_canonical(canonical_key, val, "listing", rank)
 
     # --- AI-extracted components (rank 30) ---
-    # Normalize AI component names to canonical keys used by condition
-    # scoring. Claude paraphrases wildly — we've seen variants like
-    # "HVAC system (x2)", "HVAC system (both units)", "HVAC systems",
-    # "heat pump x2", "central air conditioning", etc. Exact-key
-    # matching is whack-a-mole. Instead we do substring matching:
-    # check the raw name for ANY of the component's keywords and map
-    # to the canonical short key. First match wins, so list more
-    # specific categories before more generic ones (water_heater
-    # before heater, etc.).
-    _COMPONENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-        # (canonical_key, substring patterns to look for in lowered raw name)
-        # water_heater before hvac — "water heat" catches both "water
-        # heater" and "water heating" (and also "heat pump water
-        # heater", which correctly resolves to water_heater because
-        # the pump is the heating element OF the water heater).
-        ("water_heater", ("water_heater", "water heater", "water heat", "hot_water")),
-        ("hvac",         ("hvac", "heat_pump", "heatpump", "heat pump",
-                          "furnace", "central_air", "central air",
-                          "air_conditioning", "air conditioning", "ac_unit",
-                          "heating", "cooling")),
-        ("roof",         ("roof",)),
-        ("electrical_panel", ("electrical_panel", "electrical panel",
-                              "breaker_box", "service_panel", "panel",
-                              "electrical")),
-        ("windows",      ("window",)),           # matches windows too
-        ("appliances",   ("appliance",)),        # matches appliances too
-        ("fence",        ("fence", "fencing")),
-        ("siding",       ("siding", "exterior")),
-        ("driveway",     ("driveway",)),
-        ("garage_door",  ("garage_door", "garage door")),
-        ("deck",         ("deck", "decking")),
-        ("patio",        ("patio",)),
-        ("kitchen",      ("kitchen",)),           # cabinets, countertops
-        ("basement",     ("basement",)),
-        ("sprinkler",    ("sprinkler", "irrigation")),
-    ]
-
-    def _canonical_component_key(raw: str) -> str:
-        """Map a free-text AI component name to a canonical short key.
-
-        'HVAC system (both units)' → 'hvac'
-        'roof asphalt shingle'     → 'roof'
-        'Quartz kitchen counters'  → 'kitchen'
-        'Gazebo'                   → 'gazebo' (passthrough, no match)
-        """
-        low = raw.lower().replace("_", " ").strip()
-        for canonical_key, patterns in _COMPONENT_KEYWORDS:
-            for pat in patterns:
-                pat_norm = pat.replace("_", " ")
-                if pat_norm in low:
-                    return canonical_key
-        # No match — passthrough with spaces→underscores so we still
-        # get a valid key, just not one the condition engine scores.
-        return raw.lower().replace(" ", "_")
-
+    # See module-level _COMPONENT_KEYWORDS / canonical_component_key for
+    # the substring-matching keyword table. Promoted out of this closure
+    # so the orchestrator's _task_condition can reuse it directly instead
+    # of duplicating a keyword table that drifts out of sync.
     for comp in ai_extracted.get("components", []):
         raw_name = comp.get("component", "") or ""
-        component_name = _canonical_component_key(raw_name)
+        component_name = canonical_component_key(raw_name)
         year = comp.get("year")
         confidence = comp.get("confidence", "low")
 
