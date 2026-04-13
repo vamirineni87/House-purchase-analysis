@@ -9,6 +9,15 @@ import { formatDate, formatCurrency, escapeHtml } from '../utils.js';
 import { renderBadge, runStatusBadgeVariant } from '../components/badge.js';
 import { showAddPropertyModal } from '../components/modal.js';
 
+// Watchlist-stage filter chips. "active" is the default — everything except
+// rejected, so stale-lost offers don't clutter the main view.
+const WATCHLIST_STAGES = ['researching', 'touring', 'offer', 'contract', 'closed', 'rejected'];
+const FILTER_CHIPS = [
+    { key: 'active', label: 'Active' },
+    { key: 'all', label: 'All' },
+    ...WATCHLIST_STAGES.map(s => ({ key: s, label: s.charAt(0).toUpperCase() + s.slice(1) })),
+];
+
 let _data = {
     properties: [],
     latestRuns: {},
@@ -16,6 +25,7 @@ let _data = {
     countyAssessed: {},
     loading: true,
     error: null,
+    filter: 'active',
 };
 
 // ---------------------------------------------------------------
@@ -88,6 +98,38 @@ function runStatusLabel(status) {
     return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function statusLabel(v) {
+    if (!v) return '--';
+    return v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Color pill for a buyer-status value. Picks a Tailwind palette based on the
+// value's *meaning* (positive / neutral / negative) so Rejected always reads
+// red regardless of which of the three status fields it came from.
+function statusPill(v) {
+    if (!v) return '<span class="text-gray-300">--</span>';
+    const key = v.toLowerCase();
+    let cls = 'bg-gray-100 text-gray-700';
+    if (['rejected', 'reject', 'lost', 'passed', 'deprioritize'].includes(key)) {
+        cls = 'bg-red-100 text-red-700';
+    } else if (['won', 'pursue', 'offer', 'offered', 'offer_ready', 'contract'].includes(key)) {
+        cls = 'bg-green-100 text-green-700';
+    } else if (['touring', 'shortlisted', 'researching', 'maybe'].includes(key)) {
+        cls = 'bg-blue-100 text-blue-700';
+    } else if (['closed', 'discovered', 'waiting_on_docs'].includes(key)) {
+        cls = 'bg-yellow-100 text-yellow-700';
+    }
+    return `<span class="inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}">${escapeHtml(statusLabel(v))}</span>`;
+}
+
+function filterProperties(properties, filter) {
+    if (filter === 'all') return properties;
+    if (filter === 'active') {
+        return properties.filter(p => (p.watchlist_stage || '') !== 'rejected');
+    }
+    return properties.filter(p => (p.watchlist_stage || '') === filter);
+}
+
 function zillowLink(ld) {
     const url = ld?._url || ld?.listing_url || ld?.url || '';
     if (!url) return '';
@@ -101,11 +143,36 @@ function zillowLink(ld) {
 // ---------------------------------------------------------------
 
 export function render(container) {
-    const { properties, latestRuns, listings, countyAssessed, loading, error } = _data;
+    const { properties, latestRuns, listings, countyAssessed, loading, error, filter } = _data;
 
     const errorHtml = error
         ? `<div class="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-4">${escapeHtml(error)}</div>`
         : '';
+
+    // Per-stage counts drive the chip badges.
+    const counts = { all: properties.length, active: 0 };
+    for (const s of WATCHLIST_STAGES) counts[s] = 0;
+    for (const p of properties) {
+        const s = p.watchlist_stage || '';
+        if (s !== 'rejected') counts.active += 1;
+        if (s && counts[s] != null) counts[s] += 1;
+    }
+
+    const chipsHtml = FILTER_CHIPS.map(c => {
+        const active = filter === c.key;
+        const cls = active
+            ? 'bg-blue-600 text-white border-blue-600'
+            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50';
+        return `<button data-filter="${c.key}" class="px-3 py-1 text-xs rounded-full border transition-colors ${cls}">
+            ${escapeHtml(c.label)} <span class="opacity-70">(${counts[c.key] || 0})</span>
+        </button>`;
+    }).join('');
+
+    const filterBarHtml = !loading && properties.length > 0
+        ? `<div class="flex flex-wrap gap-2 mb-4">${chipsHtml}</div>`
+        : '';
+
+    const visible = filterProperties(properties, filter);
 
     let bodyHtml;
 
@@ -117,9 +184,14 @@ export function render(container) {
             <p class="text-lg mb-2">No properties yet</p>
             <p class="text-sm">Click "+ Add Property" to start tracking.</p>
         </div>`;
+    } else if (visible.length === 0) {
+        bodyHtml = `
+        <div class="text-center py-12 text-gray-500">
+            <p class="text-sm">No properties match this filter.</p>
+        </div>`;
     } else {
         // Mobile cards
-        const mobileCards = properties.map(p => {
+        const mobileCards = visible.map(p => {
             const ld = listings[p.id] || {};
             const run = latestRuns[p.id];
             const assessed = countyAssessed[p.id];
@@ -134,6 +206,11 @@ export function render(container) {
                         <span>${fmtNum(ld.bedrooms || ld.beds)}bd/${fmtNum(ld.bathrooms || ld.baths)}ba</span>
                         <span>${fmtNum(ld.sqft)} sf</span>
                     </div>
+                    <div class="flex items-center gap-2 flex-wrap mb-2">
+                        ${statusPill(p.watchlist_stage)}
+                        ${statusPill(p.decision_status)}
+                        ${statusPill(p.decision_stage)}
+                    </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         ${badge}
                         <span class="text-xs text-gray-400 ml-auto">${formatDate(p.created_at)}</span>
@@ -146,7 +223,7 @@ export function render(container) {
         }).join('');
 
         // Desktop table rows
-        const tableRows = properties.map(p => {
+        const tableRows = visible.map(p => {
             const ld = listings[p.id] || {};
             const run = latestRuns[p.id];
             const assessed = countyAssessed[p.id];
@@ -167,6 +244,9 @@ export function render(container) {
                 <td class="px-3 py-2.5 text-sm text-gray-700 text-center">${fmtNum(ld.bathrooms || ld.baths)}</td>
                 <td class="px-3 py-2.5 text-sm text-gray-700 text-right">${ld.sqft ? Number(ld.sqft).toLocaleString() : '--'}</td>
                 <td class="px-3 py-2.5 text-sm text-gray-700 text-center">${dom != null ? dom : '--'}</td>
+                <td class="px-3 py-2.5">${statusPill(p.watchlist_stage)}</td>
+                <td class="px-3 py-2.5">${statusPill(p.decision_status)}</td>
+                <td class="px-3 py-2.5">${statusPill(p.decision_stage)}</td>
                 <td class="px-3 py-2.5">${badge}</td>
                 <td class="px-3 py-2.5 text-center">
                     <button data-delete-id="${escapeHtml(p.id)}" class="text-gray-300 hover:text-red-500 transition-colors p-1" title="Delete property">
@@ -193,7 +273,10 @@ export function render(container) {
                         <th class="px-3 py-2.5 font-medium text-center">Baths</th>
                         <th class="px-3 py-2.5 font-medium text-right">Sqft</th>
                         <th class="px-3 py-2.5 font-medium text-center">DOM</th>
-                        <th class="px-3 py-2.5 font-medium">Status</th>
+                        <th class="px-3 py-2.5 font-medium">Watchlist</th>
+                        <th class="px-3 py-2.5 font-medium">Decision</th>
+                        <th class="px-3 py-2.5 font-medium">Stage</th>
+                        <th class="px-3 py-2.5 font-medium">Run</th>
                         <th class="px-3 py-2.5 font-medium text-center w-10"></th>
                     </tr>
                 </thead>
@@ -209,6 +292,7 @@ export function render(container) {
             <button id="add-property-btn" class="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">+ Add Property</button>
         </div>
         ${errorHtml}
+        ${filterBarHtml}
         ${bodyHtml}
     </div>`;
 }
@@ -222,6 +306,14 @@ export function bind(container) {
     if (addBtn) {
         addBtn.addEventListener('click', () => showAddPropertyModal());
     }
+
+    container.querySelectorAll('[data-filter]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _data.filter = btn.getAttribute('data-filter');
+            render(container);
+            bind(container);
+        });
+    });
 
     container.querySelectorAll('[data-property-id]').forEach(row => {
         row.addEventListener('click', (e) => {

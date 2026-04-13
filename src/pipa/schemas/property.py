@@ -78,6 +78,9 @@ class PropertySummary(BaseModel):
     address: Optional[str] = None
     county: Optional[str] = None
     created_at: datetime
+    watchlist_stage: Optional[str] = None
+    decision_status: Optional[str] = None
+    decision_stage: Optional[str] = None
 
 
 class PropertyIngestRequest(BaseModel):

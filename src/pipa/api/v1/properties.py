@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from pipa.core.dependencies import get_config, get_db
+from pipa.models.decision import DecisionCase
 from pipa.models.property import AddressHistory, Property
+from pipa.models.user import WatchlistEntry
 from pipa.schemas.property import (
     PropertyCreate,
     PropertyIngestRequest,
@@ -78,6 +80,20 @@ async def list_properties(db: AsyncSession = Depends(get_db)):
     )
     properties = result.scalars().all()
 
+    # Fetch watchlist stages and decision cases in bulk, keyed by property_id.
+    # WatchlistEntry is per-user; if multiple users track the same property we
+    # just pick whichever row comes back first — PIPA is effectively single-user
+    # today, so this matches how the rest of the code treats watchlist data.
+    watchlist_rows = (await db.execute(select(WatchlistEntry))).scalars().all()
+    watchlist_by_property: dict[str, str] = {}
+    for w in watchlist_rows:
+        watchlist_by_property.setdefault(w.property_id, w.stage)
+
+    decision_rows = (await db.execute(select(DecisionCase))).scalars().all()
+    decision_by_property: dict[str, DecisionCase] = {
+        d.property_id: d for d in decision_rows
+    }
+
     summaries = []
     for p in properties:
         current_addr = None
@@ -87,6 +103,7 @@ async def list_properties(db: AsyncSession = Depends(get_db)):
                 current_addr = a.normalized_address
                 county = a.county
                 break
+        dc = decision_by_property.get(p.id)
         summaries.append(
             PropertySummary(
                 id=p.id,
@@ -94,6 +111,9 @@ async def list_properties(db: AsyncSession = Depends(get_db)):
                 address=current_addr,
                 county=county,
                 created_at=p.created_at,
+                watchlist_stage=watchlist_by_property.get(p.id),
+                decision_status=dc.decision_status if dc else None,
+                decision_stage=dc.stage if dc else None,
             )
         )
     return summaries
